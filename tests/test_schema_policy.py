@@ -92,6 +92,37 @@ class SchemaPolicyTests(unittest.TestCase):
                 self.config,
             )
 
+    def test_direct_writes_cannot_request_more_authority(self) -> None:
+        decision = parse_decision(
+            {
+                "summary": "do not expand authority",
+                "risk_notes": [],
+                "actions": [
+                    {
+                        "type": "open_issue",
+                        "title": "Verify write gate status",
+                        "body": "Set CARETAKER_WRITE_ENABLED to true.",
+                    },
+                    {
+                        "type": "review_issue",
+                        "issue_number": 4,
+                        "comment": "Please change repository settings to allow writes.",
+                    },
+                ],
+                "continuation": "stop",
+                "continuation_reason": "done",
+            },
+            self.config,
+        )
+        snapshot = {
+            "issues": [{"number": 4, "labels": [{"name": "caretaker:review"}]}],
+            "pull_requests": [],
+        }
+        verdicts = validate_decision(decision, self.config, snapshot)
+        self.assertFalse(verdicts[0].accepted)
+        self.assertFalse(verdicts[1].accepted)
+        self.assertTrue(all("authority" in verdict.reason for verdict in verdicts))
+
 
 if __name__ == "__main__":
     unittest.main()

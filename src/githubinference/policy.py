@@ -9,6 +9,10 @@ from .config import CaretakerConfig
 from .schema import Action, Decision
 
 _DIFF_HEADER = re.compile(r"^diff --git a/(.+) b/(.+)$")
+_AUTHORITY_REQUEST = re.compile(
+    r"(?i)\b(?:CARETAKER_WRITE_ENABLED|write[- ]gate|enable(?:d|ment|ing)? writes?|"
+    r"workflow permissions?|repository settings?|environment secrets?)\b"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +57,11 @@ def validate_decision(
                 accepted, reason = False, "duplicate comment target in one run"
             elif not action.payload["comment"].strip():
                 accepted, reason = False, "issue comment is empty"
+            elif _requests_authority(action.payload["comment"]):
+                accepted, reason = (
+                    False,
+                    "model comments cannot request authority or settings changes",
+                )
             seen_comments.add(number)
         elif action.type == "open_issue":
             new_issues += 1
@@ -60,6 +69,13 @@ def validate_decision(
                 accepted, reason = False, "new issue budget exceeded"
             elif not action.payload["title"]:
                 accepted, reason = False, "issue title is empty"
+            elif _requests_authority(
+                f"{action.payload['title']}\n{action.payload['body']}"
+            ):
+                accepted, reason = (
+                    False,
+                    "model-created issues cannot request authority or settings changes",
+                )
         elif action.type == "propose_change":
             try:
                 paths = validate_unified_diff(action.payload["patch"], config)
@@ -143,3 +159,7 @@ def _reviewable_numbers(snapshot: dict[str, Any], label: str) -> set[int]:
             if label in labels and isinstance(item.get("number"), int):
                 numbers.add(item["number"])
     return numbers
+
+
+def _requests_authority(text: str) -> bool:
+    return _AUTHORITY_REQUEST.search(text) is not None
