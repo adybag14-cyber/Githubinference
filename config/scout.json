@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "publishers": [
+    "LiquidAI",
+    "google",
+    "ggml-org",
+    "microsoft",
+    "Qwen",
+    "meta-llama"
+  ],
+  "maximum_candidates": 16,
+  "maximum_response_bytes": 2097152,
+  "query_limit": 100,
+  "notes": "Discovery is report-only. A candidate cannot become automatic until an immutable revision, artifact SHA256, license, CPU smoke test, quality test, and rollback plan are reviewed."
+}

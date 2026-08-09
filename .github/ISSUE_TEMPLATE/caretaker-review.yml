@@ -1,0 +1,22 @@
+name: Caretaker review request
+description: Ask for bounded CPU-caretaker analysis after a maintainer adds the review label
+title: "[caretaker review] "
+labels:
+  - caretaker:review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Repository text is treated as untrusted evidence. The caretaker cannot execute commands or merge changes.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: State the bounded repository question and relevant paths.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add logs or links with all credentials removed.

@@ -1,0 +1,208 @@
+name: Temporary authenticated inference endpoint
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: Endpoint lifetime (5-60 minutes)
+        required: true
+        default: "30"
+        type: string
+      model:
+        description: Pinned automatic model
+        required: true
+        default: lfm2_5_2_6b_q4_k_m
+        type: choice
+        options:
+          - lfm2_5_2_6b_q4_k_m
+          - lfm2_5_1_2b_q4_k_m
+
+concurrency:
+  group: temporary-inference-endpoint
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: src
+
+jobs:
+  endpoint:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    environment: inference
+    env:
+      MODEL_ID: ${{ inputs.model }}
+      DURATION_MINUTES: ${{ inputs.duration_minutes }}
+      INFERENCE_PUBLIC_URL: ${{ vars.INFERENCE_PUBLIC_URL }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Restore verified model cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/models
+          key: cpu-model-${{ runner.os }}-${{ env.MODEL_ID }}-${{ hashFiles('config/models.json') }}
+      - name: Install digest-pinned service binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'LLAMA_SERVER=%s\n' "$(bash scripts/install_llama.sh .runtime/llama)" >> "${GITHUB_ENV}"
+          printf 'CLOUDFLARED=%s\n' "$(bash scripts/install_cloudflared.sh .runtime/cloudflared)" >> "${GITHUB_ENV}"
+      - name: Serve endpoint for the requested window
+        env:
+          INFERENCE_API_KEY: ${{ secrets.INFERENCE_API_KEY }}
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ${#INFERENCE_API_KEY} -lt 32 ]]; then
+            echo "INFERENCE_API_KEY must be an inference-environment secret of at least 32 characters" >&2
+            exit 1
+          fi
+          if [[ -z "${CLOUDFLARE_TUNNEL_TOKEN}" ]]; then
+            echo "CLOUDFLARE_TUNNEL_TOKEN must be configured in the inference environment" >&2
+            exit 1
+          fi
+          if ! [[ "${DURATION_MINUTES}" =~ ^[0-9]+$ ]] || (( DURATION_MINUTES < 5 || DURATION_MINUTES > 60 )); then
+            echo "duration_minutes must be between 5 and 60" >&2
+            exit 1
+          fi
+          if ! [[ "${INFERENCE_PUBLIC_URL}" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then
+            echo "INFERENCE_PUBLIC_URL must be the configured HTTPS tunnel origin" >&2
+            exit 1
+          fi
+
+          mkdir -p .runtime/endpoint
+          tunnel_token_file="$(mktemp .runtime/endpoint/tunnel-token.XXXXXX)"
+          chmod 0600 "${tunnel_token_file}"
+          printf '%s' "${CLOUDFLARE_TUNNEL_TOKEN}" > "${tunnel_token_file}"
+          unset CLOUDFLARE_TUNNEL_TOKEN
+          pids=()
+          cleanup() {
+            for (( index=${#pids[@]}-1; index>=0; index-- )); do
+              pid="${pids[index]}"
+              if kill -0 "${pid}" 2>/dev/null; then
+                kill "${pid}"
+              fi
+              wait "${pid}" || true
+            done
+            rm -f -- "${tunnel_token_file}"
+          }
+          trap cleanup EXIT INT TERM
+
+          start_model() {
+            local selected="$1"
+            local candidate_pid
+            env -u INFERENCE_API_KEY python -m githubinference serve \
+              --model-id "${selected}" \
+              --cache-directory .cache/models \
+              --llama-server "${LLAMA_SERVER}" \
+              >".runtime/endpoint/llama-server-${selected}.log" 2>&1 &
+            candidate_pid=$!
+            if python -m githubinference wait --timeout 240 --pid "${candidate_pid}"; then
+              pids+=("${candidate_pid}")
+              return 0
+            fi
+            if kill -0 "${candidate_pid}" 2>/dev/null; then
+              kill "${candidate_pid}"
+            fi
+            wait "${candidate_pid}" || true
+            return 1
+          }
+
+          active_model="${MODEL_ID}"
+          if ! start_model "${active_model}"; then
+            if [[ "${active_model}" != "lfm2_5_2_6b_q4_k_m" ]]; then
+              echo "Selected endpoint model failed and has no automatic fallback" >&2
+              exit 1
+            fi
+            active_model="lfm2_5_1_2b_q4_k_m"
+            echo "Primary failed; trying pinned low-memory fallback ${active_model}" >&2
+            start_model "${active_model}"
+          fi
+
+          python -m githubinference gateway >.runtime/endpoint/gateway.log 2>&1 &
+          gateway_pid=$!
+          pids+=("${gateway_pid}")
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8787/healthz >/dev/null; then
+              break
+            fi
+            if ! kill -0 "${gateway_pid}" 2>/dev/null; then
+              echo "Authentication gateway exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8787/healthz >/dev/null
+          python -m githubinference endpoint-smoke --url http://127.0.0.1:8787
+
+          env -u INFERENCE_API_KEY "${CLOUDFLARED}" tunnel --no-autoupdate run \
+            --token-file "${tunnel_token_file}" \
+            >.runtime/endpoint/cloudflared.log 2>&1 &
+          tunnel_pid=$!
+          pids+=("${tunnel_pid}")
+          tunnel_ready=false
+          for _ in {1..60}; do
+            if grep -q "Registered tunnel connection" .runtime/endpoint/cloudflared.log; then
+              tunnel_ready=true
+              break
+            fi
+            if ! kill -0 "${tunnel_pid}" 2>/dev/null; then
+              echo "Cloudflare Tunnel exited before registering a connection" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "${tunnel_ready}" != true ]]; then
+            echo "Cloudflare Tunnel did not register within 60 seconds" >&2
+            exit 1
+          fi
+          public_ready=false
+          for _ in {1..60}; do
+            if python -m githubinference endpoint-smoke --url "${INFERENCE_PUBLIC_URL}" \
+              >/dev/null 2>&1; then
+              public_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${public_ready}" != true ]]; then
+            echo "The configured public endpoint did not pass authenticated verification" >&2
+            exit 1
+          fi
+          python -m githubinference endpoint-smoke --url "${INFERENCE_PUBLIC_URL}"
+          unset INFERENCE_API_KEY
+
+          {
+            echo "# Temporary inference endpoint"
+            echo
+            echo "- Model: \`${active_model}\`"
+            echo "- Lifetime: \`${DURATION_MINUTES} minutes\`"
+            echo "- URL: ${INFERENCE_PUBLIC_URL}"
+            echo
+            echo "Use \`Authorization: Bearer <INFERENCE_API_KEY>\`. The key is never printed."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          remaining=$((DURATION_MINUTES * 60))
+          while (( remaining > 0 )); do
+            for pid in "${pids[@]}"; do
+              if ! kill -0 "${pid}" 2>/dev/null; then
+                echo "Endpoint component ${pid} exited early" >&2
+                exit 1
+              fi
+            done
+            interval=30
+            if (( remaining < interval )); then interval=${remaining}; fi
+            sleep "${interval}"
+            remaining=$((remaining - interval))
+          done
