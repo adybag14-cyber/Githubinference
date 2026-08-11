@@ -55,7 +55,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["open_issue"]},
-                "title": {"type": "string", "maxLength": 180},
+                "title": text,
                 "body": text,
             },
             "required": ["type", "title", "body"],
@@ -65,12 +65,9 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["propose_change"]},
-                "title": {"type": "string", "maxLength": 180},
-                "description": {"type": "string", "maxLength": 5000},
-                "patch": {
-                    "type": "string",
-                    "maxLength": config.maximum_proposal_characters,
-                },
+                "title": text,
+                "description": text,
+                "patch": text,
             },
             "required": ["type", "title", "description", "patch"],
             "additionalProperties": False,
@@ -79,12 +76,12 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["propose_model"]},
-                "repository": {"type": "string", "maxLength": 160},
-                "revision": {"type": "string", "maxLength": 80},
+                "repository": text,
+                "revision": text,
                 "rationale": text,
                 "evidence_urls": {
                     "type": "array",
-                    "items": {"type": "string", "maxLength": 500},
+                    "items": text,
                     "maxItems": 6,
                 },
             },
@@ -95,10 +92,10 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["request_subagent"]},
-                "task": {"type": "string", "maxLength": 4000},
+                "task": text,
                 "scope": {
                     "type": "array",
-                    "items": {"type": "string", "maxLength": 300},
+                    "items": text,
                     "maxItems": 12,
                 },
             },
@@ -109,7 +106,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["checkpoint"]},
-                "note": {"type": "string", "maxLength": 4000},
+                "note": text,
             },
             "required": ["type", "note"],
             "additionalProperties": False,
@@ -121,7 +118,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "summary": text,
             "risk_notes": {
                 "type": "array",
-                "items": {"type": "string", "maxLength": 2000},
+                "items": text,
                 "maxItems": 12,
             },
             "actions": {
@@ -135,7 +132,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
                 "maxItems": config.maximum_actions_per_run,
             },
             "continuation": {"enum": ["continue", "stop"]},
-            "continuation_reason": {"type": "string", "maxLength": 3000},
+            "continuation_reason": text,
         },
         "required": [
             "summary",
