@@ -44,6 +44,8 @@ class LlamaCppClient:
             "::1",
         }:
             raise ValueError("caretaker backend must be a loopback HTTP endpoint")
+        if timeout_seconds <= 0:
+            raise ValueError("caretaker backend timeout must be positive")
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
@@ -51,7 +53,10 @@ class LlamaCppClient:
         self.top_p = top_p
         self.top_k = top_k
         self.repeat_penalty = repeat_penalty
-        self._opener = urllib.request.build_opener(_RejectRedirects())
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectRedirects(),
+        )
 
     def health(self) -> bool:
         try:
