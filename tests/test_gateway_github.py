@@ -24,6 +24,7 @@ from githubinference.github_api import (
     _read_subagent_archive,
     _retry_after_seconds,
 )
+from githubinference.prompts import CARETAKER_SYSTEM_PROMPT
 
 
 class _UpstreamHandler(BaseHTTPRequestHandler):
@@ -238,6 +239,39 @@ class GatewayGitHubTests(unittest.TestCase):
         self.assertTrue(comment_result["skipped"])
         self.assertTrue(issue_result["skipped"])
         self.assertTrue(any("page=2" in call for call in calls))
+
+    def test_snapshot_excludes_the_current_workflow_run(self) -> None:
+        client = GitHubClient("owner/repo", "test-token")
+
+        def request(method: str, path: str, *args: object, **kwargs: object) -> object:
+            del method, args, kwargs
+            if path.startswith("/issues?") or path.startswith("/pulls?"):
+                return []
+            if path.startswith("/actions/runs?"):
+                return {
+                    "workflow_runs": [
+                        {"id": 123, "name": "current", "status": "in_progress"},
+                        {"id": 456, "name": "prior", "status": "completed"},
+                    ]
+                }
+            self.fail(f"unexpected request: {path}")
+
+        with (
+            patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}, clear=False),
+            patch.object(GitHubClient, "_request", side_effect=request),
+        ):
+            snapshot = client.read_snapshot()
+        self.assertEqual(
+            [run["id"] for run in snapshot["workflow_runs"]],
+            [456],
+        )
+
+    def test_caretaker_prompt_forbids_unobserved_issue_targets(self) -> None:
+        self.assertIn(
+            "exact issue number present in the snapshot", CARETAKER_SYSTEM_PROMPT
+        )
+        self.assertIn("issues array is empty", CARETAKER_SYSTEM_PROMPT)
+        self.assertIn("status in_progress is ordinary", CARETAKER_SYSTEM_PROMPT)
 
     def test_retry_after_accepts_seconds_http_date_and_invalid_values(self) -> None:
         self.assertEqual(_retry_after_seconds("7"), 7)
