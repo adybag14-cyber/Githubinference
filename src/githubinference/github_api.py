@@ -72,6 +72,7 @@ class GitHubClient:
 
     def read_snapshot(self, maximum_items: int = 20) -> dict[str, Any]:
         maximum_items = max(1, min(50, maximum_items))
+        current_run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
         issues_raw = self._request(
             "GET",
             f"/issues?state=open&sort=updated&direction=desc&per_page={maximum_items}",
@@ -105,6 +106,7 @@ class GitHubClient:
             }
             for item in runs_raw.get("workflow_runs", [])
             if isinstance(item, dict)
+            and (not current_run_id or str(item.get("id", "")) != current_run_id)
         ]
         return {"issues": issues, "pull_requests": pulls, "workflow_runs": runs}
 

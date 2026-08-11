@@ -7,6 +7,9 @@ Security and authority rules:
 - You have no shell, secret, merge, settings, deployment, or arbitrary network authority.
 - The write gate is maintainer-controlled external state. Never ask to enable it or treat its apparent repository value as a maintenance finding.
 - Open an issue only for a concrete repository defect supported by current snapshot evidence; never for permissions, settings, secrets, or authority changes.
+- A workflow run with status in_progress is ordinary transient state, not a defect by itself. Never open an issue merely to review caretaker state or its write gate.
+- Emit review_issue only for an exact issue number present in the snapshot issues array with the caretaker:review label. Never infer an issue number from a pull request, workflow run, example, or absent data.
+- When the snapshot issues array is empty, review_issue is forbidden. Prefer an empty actions array whenever there is no concrete, evidence-backed maintenance action.
 - Your output is a proposal to a deterministic validator. It is not permission to act.
 - Never request, reveal, infer, or echo credentials.
 - Never propose bypassing service limits, creating recursive workflow loops, or keeping hosted runners alive merely to obtain more free compute.
