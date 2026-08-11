@@ -48,8 +48,10 @@ def run_subagent(
     return envelope
 
 
-def _validate_result(raw: dict[str, Any]) -> dict[str, Any]:
+def _validate_result(raw: Any) -> dict[str, Any]:
     allowed = {"summary", "findings", "suggested_follow_up"}
+    if not isinstance(raw, dict):
+        raise ValueError("subagent result is not an object")
     if set(raw) - allowed:
         raise ValueError("subagent result contains unknown fields")
     summary = bounded_text(raw.get("summary", ""), 5000, field="summary")

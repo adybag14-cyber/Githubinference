@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from githubinference.downloader import ModelDownloadError, download_model, model_url
-from githubinference.registry import ModelRegistry, ModelSpec
+from githubinference.registry import ModelRegistry, ModelSpec, _validate_spec
+from githubinference.scout import scout_models
 from githubinference.server import llama_server_command
 
 
@@ -34,7 +37,7 @@ def _small_spec(content: bytes) -> ModelSpec:
         sha256=hashlib.sha256(content).hexdigest(),
         size_bytes=len(content),
         license="test",
-        publisher_trust="test",
+        publisher_trust="upstream",
         automatic_eligible=True,
         context_size=1024,
     )
@@ -90,11 +93,11 @@ class RegistryDownloaderTests(unittest.TestCase):
         target = registry.get("gemma4_e2b_it_qat_q4_0")
         draft = registry.get("gemma4_e2b_it_qat_mtp_q8_0")
         command = llama_server_command(
-            "/tmp/llama-server",
+            "/opt/githubinference/llama-server",
             target,
-            "/tmp/target.gguf",
+            "/opt/githubinference/target.gguf",
             draft_spec=draft,
-            draft_path="/tmp/draft.gguf",
+            draft_path="/opt/githubinference/draft.gguf",
         )
         self.assertIn("draft-mtp", command)
         self.assertIn("--spec-draft-model", command)
@@ -102,11 +105,31 @@ class RegistryDownloaderTests(unittest.TestCase):
         self.assertEqual(command[command.index("--reasoning-budget") + 1], "0")
         with self.assertRaisesRegex(ValueError, "both draft"):
             llama_server_command(
-                "/tmp/llama-server",
+                "/opt/githubinference/llama-server",
                 target,
-                "/tmp/target.gguf",
+                "/opt/githubinference/target.gguf",
                 draft_spec=draft,
             )
+
+    def test_sampling_parameters_reject_booleans_and_invalid_numbers(self) -> None:
+        spec = _small_spec(b"abcdef")
+        for invalid in (
+            replace(spec, temperature=True),
+            replace(spec, top_p="0.5"),  # type: ignore[arg-type]
+            replace(spec, top_k=False),
+            replace(spec, repeat_penalty=0),
+            replace(spec, repeat_penalty=11),
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "invalid"):
+                    _validate_spec(invalid)
+
+    def test_scout_rejects_missing_required_configuration_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "scout.json"
+            config.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "missing keys"):
+                scout_models(config)
 
 
 if __name__ == "__main__":

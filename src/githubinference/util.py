@@ -118,5 +118,6 @@ def append_job_summary(markdown: str) -> None:
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
+    safe_markdown = redact_secrets(markdown)
     with Path(path).open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(markdown.rstrip() + "\n")
+        handle.write(safe_markdown.rstrip() + "\n")

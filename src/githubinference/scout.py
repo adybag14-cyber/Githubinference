@@ -19,8 +19,19 @@ def scout_models(
     timeout_seconds: int = 30,
 ) -> dict[str, Any]:
     config = load_json(config_path)
+    if not isinstance(config, dict):
+        raise ValueError("scout configuration must be an object")
     if config.get("schema_version") != 1:
         raise ValueError("unsupported scout configuration schema")
+    required = {
+        "query_limit",
+        "maximum_response_bytes",
+        "publishers",
+        "maximum_candidates",
+    }
+    missing = required - set(config)
+    if missing:
+        raise ValueError(f"scout configuration is missing keys: {sorted(missing)}")
     params = urllib.parse.urlencode(
         {
             "filter": "gguf",

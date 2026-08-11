@@ -82,7 +82,13 @@ def run_analysis(
             len(collected_actions) + len(decision.actions)
             > config.maximum_actions_per_run
         ):
-            raise ValueError("cumulative action budget exceeded across caretaker turns")
+            checkpoint_required = True
+            next_run_requested = True
+            continuation_reason = (
+                "cumulative action budget reached; the over-budget turn was discarded "
+                "and prior state was checkpointed for the next normal schedule"
+            )
+            break
         verdicts = validate_decision(decision, config, snapshot)
         turns.append(
             {

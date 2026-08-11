@@ -101,17 +101,25 @@ def _validate_spec(spec: ModelSpec) -> None:
         raise ValueError(
             f"automatic model {spec.model_id} must be an upstream chat model"
         )
-    if spec.kind == "draft" and spec.automatic_eligible:
-        raise ValueError(f"draft model {spec.model_id} cannot be automatic")
     if not isinstance(spec.license, str) or not spec.license.strip():
         raise ValueError(f"license for {spec.model_id} is empty")
     if not isinstance(spec.publisher_trust, str) or not spec.publisher_trust.strip():
         raise ValueError(f"publisher trust for {spec.model_id} is empty")
     if spec.draft_model is not None and not isinstance(spec.draft_model, str):
         raise ValueError(f"draft model id for {spec.model_id} is invalid")
-    if not 0 <= spec.temperature <= 2:
+    if not _is_number(spec.temperature) or not 0 <= spec.temperature <= 2:
         raise ValueError(f"temperature for {spec.model_id} is invalid")
-    if not 0 < spec.top_p <= 1:
+    if not _is_number(spec.top_p) or not 0 < spec.top_p <= 1:
         raise ValueError(f"top_p for {spec.model_id} is invalid")
-    if not 0 <= spec.top_k <= 1000:
+    if (
+        isinstance(spec.top_k, bool)
+        or not isinstance(spec.top_k, int)
+        or not 0 <= spec.top_k <= 1000
+    ):
         raise ValueError(f"top_k for {spec.model_id} is invalid")
+    if not _is_number(spec.repeat_penalty) or not 0 < spec.repeat_penalty <= 10:
+        raise ValueError(f"repeat_penalty for {spec.model_id} is invalid")
+
+
+def _is_number(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float))

@@ -43,6 +43,8 @@ def apply_decision(
     client = github
     if writes and client is None:
         client = GitHubClient.from_environment(require_token=True)
+    if writes and client is None:
+        raise ValueError("GitHub writes are enabled but no client is available")
 
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
@@ -78,7 +80,6 @@ def apply_decision(
 
     report_pr: dict[str, Any] | None = None
     if writes and report_files:
-        assert client is not None
         report_pr = client.create_report_pull_request(
             run_id=selected_run,
             title=f"caretaker: review report for {selected_run}",
@@ -139,7 +140,6 @@ def _handle_action(
     marker = _operation_marker(action.type, action.payload)
     if action.type == "review_issue":
         if writes:
-            assert github is not None
             operation["result"] = github.comment_once(
                 action.payload["issue_number"], action.payload["comment"], marker
             )
@@ -148,7 +148,6 @@ def _handle_action(
             operation["reason"] += "; write gate disabled"
     elif action.type == "open_issue":
         if writes:
-            assert github is not None
             operation["result"] = github.create_issue(
                 action.payload["title"], action.payload["body"], marker
             )
@@ -157,7 +156,6 @@ def _handle_action(
             operation["reason"] += "; write gate disabled"
     elif action.type == "request_subagent":
         if writes:
-            assert github is not None
             task_id = safe_slug(f"{run_id}-{verdict.index}", maximum=70)
             operation["result"] = github.dispatch_subagent(
                 parent_run=run_id,

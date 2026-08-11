@@ -33,6 +33,9 @@
     "SECURITY.md",
     "config/caretaker.json",
     "src/githubinference/policy.py",
-    "src/githubinference/github_api.py"
+    "src/githubinference/github_api.py",
+    "src/githubinference/schema.py",
+    "src/githubinference/executor.py",
+    "src/githubinference/prompts.py"
   ]
 }

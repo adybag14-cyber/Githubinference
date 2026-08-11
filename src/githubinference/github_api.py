@@ -9,7 +9,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from .util import bounded_text, redact_secrets, safe_slug
@@ -140,10 +143,11 @@ class GitHubClient:
         return results
 
     def comment_once(self, issue_number: int, body: str, marker: str) -> dict[str, Any]:
-        comments = self._request("GET", f"/issues/{issue_number}/comments?per_page=100")
         if any(
             marker in str(item.get("body", ""))
-            for item in comments
+            for item in self._iter_paginated(
+                f"/issues/{issue_number}/comments?sort=created&direction=desc"
+            )
             if isinstance(item, dict)
         ):
             return {"skipped": True, "reason": "marker already present"}
@@ -155,8 +159,9 @@ class GitHubClient:
         )
 
     def create_issue(self, title: str, body: str, marker: str) -> dict[str, Any]:
-        existing = self._request("GET", "/issues?state=open&per_page=100")
-        for item in existing:
+        for item in self._iter_paginated(
+            "/issues?state=open&sort=created&direction=desc"
+        ):
             if isinstance(item, dict) and marker in str(item.get("body", "")):
                 return {
                     "skipped": True,
@@ -169,6 +174,23 @@ class GitHubClient:
             {"title": title, "body": f"{body.rstrip()}\n\n{marker}"},
             expected=(201,),
         )
+
+    def _iter_paginated(
+        self, path: str, *, per_page: int = 100, maximum_pages: int = 100
+    ) -> Iterator[Any]:
+        if not 1 <= per_page <= 100 or maximum_pages < 1:
+            raise ValueError("pagination bounds are invalid")
+        separator = "&" if "?" in path else "?"
+        for page in range(1, maximum_pages + 1):
+            values = self._request(
+                "GET", f"{path}{separator}per_page={per_page}&page={page}"
+            )
+            if not isinstance(values, list):
+                raise GitHubApiError("GitHub pagination response was not a list")
+            yield from values
+            if len(values) < per_page:
+                return
+        raise GitHubApiError("GitHub pagination exceeded the 100-page safety limit")
 
     def create_report_pull_request(
         self,
@@ -202,7 +224,7 @@ class GitHubClient:
             }
 
         reference = self._request(
-            "GET", f"/git/ref/heads/{urllib.parse.quote(default_branch, safe='')}"
+            "GET", f"/git/ref/heads/{urllib.parse.quote(default_branch, safe='/')}"
         )
         base_sha = reference["object"]["sha"]
         commit = self._request("GET", f"/git/commits/{base_sha}")
@@ -354,7 +376,8 @@ class GitHubClient:
         opener = urllib.request.build_opener(_StripCrossHostAuthorization())
         last_error: BaseException | None = None
         for attempt in range(1, 4):
-            request = urllib.request.Request(
+            # api_url is fixed to GitHub HTTPS and path must be repository-relative.
+            request = urllib.request.Request(  # noqa: S310
                 url, data=data, headers=headers, method=method
             )
             try:
@@ -372,7 +395,9 @@ class GitHubClient:
                 last_error = GitHubApiError(f"GitHub HTTP {exc.code}: {detail[:1000]}")
                 if exc.code not in {403, 429, 500, 502, 503, 504} or attempt == 3:
                     raise last_error from exc
-                retry_after = int(exc.headers.get("Retry-After", "0") or 0)
+                retry_after = _retry_after_seconds(
+                    exc.headers.get("Retry-After", "") if exc.headers else ""
+                )
                 time.sleep(min(20, max(retry_after, 2**attempt)))
             except (OSError, urllib.error.URLError) as exc:
                 last_error = exc
@@ -380,6 +405,22 @@ class GitHubClient:
                     break
                 time.sleep(2**attempt)
         raise GitHubApiError(f"GitHub request failed: {last_error}")
+
+
+def _retry_after_seconds(value: str) -> int:
+    if not value:
+        return 0
+    try:
+        return max(0, int(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0, int((retry_at - datetime.now(timezone.utc)).total_seconds()))
 
 
 def _read_subagent_archive(archive: bytes) -> dict[str, Any]:

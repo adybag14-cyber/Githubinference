@@ -103,6 +103,8 @@ def validate_decision(
                 )
             else:
                 reason = "checkpoint is report-only state for a later normal schedule"
+        else:
+            accepted, reason = False, "unsupported action type rejected by policy"
         verdicts.append(ActionVerdict(index, action, accepted, reason))
     return tuple(verdicts)
 
@@ -113,28 +115,79 @@ def validate_unified_diff(patch: str, config: CaretakerConfig) -> tuple[str, ...
     if "GIT binary patch" in patch or "Binary files " in patch:
         raise ValueError("binary patches are not accepted")
     paths: list[str] = []
+    targets: list[str] = []
+    current_path: str | None = None
+    awaiting_new_target = False
+    target_seen = False
     for line in patch.splitlines():
         match = _DIFF_HEADER.match(line)
-        if not match:
+        if match:
+            if current_path is not None and not target_seen:
+                raise ValueError("proposal diff is missing a +++ target")
+            old_path, new_path = match.groups()
+            if old_path != new_path:
+                raise ValueError("renames are not accepted in autonomous proposals")
+            _validate_proposal_path(new_path, config)
+            paths.append(new_path)
+            current_path = new_path
+            awaiting_new_target = False
+            target_seen = False
             continue
-        old_path, new_path = match.groups()
-        if old_path != new_path:
-            raise ValueError("renames are not accepted in autonomous proposals")
-        if not _safe_relative_path(new_path):
-            raise ValueError(f"unsafe proposal path: {new_path!r}")
-        if any(
-            new_path == blocked.rstrip("/") or new_path.startswith(blocked)
-            for blocked in config.blocked_proposal_paths
-        ):
-            raise ValueError(f"proposal targets protected path: {new_path}")
-        paths.append(new_path)
+        if current_path is None or target_seen:
+            continue
+        if line.startswith("--- "):
+            old_target = _parse_diff_target(line, prefix="--- ", side="a/")
+            if old_target is not None:
+                _validate_proposal_path(old_target, config)
+                if old_target != current_path:
+                    raise ValueError("proposal --- target does not match diff header")
+            awaiting_new_target = True
+            continue
+        if awaiting_new_target:
+            if not line.startswith("+++ "):
+                raise ValueError("proposal diff is missing a +++ target")
+            new_target = _parse_diff_target(line, prefix="+++ ", side="b/")
+            effective_target = current_path if new_target is None else new_target
+            _validate_proposal_path(effective_target, config)
+            if effective_target != current_path:
+                raise ValueError("proposal +++ target does not match diff header")
+            targets.append(effective_target)
+            target_seen = True
+            awaiting_new_target = False
+    if current_path is not None and not target_seen:
+        raise ValueError("proposal diff is missing a +++ target")
     if not paths:
         raise ValueError("proposal is not a unified git diff")
-    if len(paths) != len(set(paths)):
+    if len(paths) != len({path.casefold() for path in paths}):
         raise ValueError("proposal repeats a diff path")
+    if len(targets) != len({path.casefold() for path in targets}):
+        raise ValueError("proposal repeats a +++ target")
+    if len(targets) != len(paths):
+        raise ValueError("proposal diff target count does not match headers")
     if len(paths) > 20:
         raise ValueError("proposal changes more than 20 paths")
     return tuple(paths)
+
+
+def _parse_diff_target(line: str, *, prefix: str, side: str) -> str | None:
+    target = line[len(prefix) :].split("\t", 1)[0]
+    if target == "/dev/null":
+        return None
+    if not target.startswith(side):
+        raise ValueError(f"proposal target must begin with {side!r}")
+    return target[len(side) :]
+
+
+def _validate_proposal_path(path: str, config: CaretakerConfig) -> None:
+    if not _safe_relative_path(path):
+        raise ValueError(f"unsafe proposal path: {path!r}")
+    candidate = path.casefold()
+    for blocked in config.blocked_proposal_paths:
+        blocked_folded = blocked.casefold()
+        if candidate == blocked_folded.rstrip("/") or (
+            blocked_folded.endswith("/") and candidate.startswith(blocked_folded)
+        ):
+            raise ValueError(f"proposal targets protected path: {path}")
 
 
 def _safe_relative_path(path: str) -> bool:

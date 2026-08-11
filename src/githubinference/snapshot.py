@@ -54,7 +54,9 @@ def build_snapshot(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     files, truncated = _collect_files(root_path, config)
-    external = _bound_untrusted(redact_structure(github_data or {}))
+    external = _bound_untrusted(
+        redact_structure(github_data or {}), maximum_items=config.maximum_github_items
+    )
     snapshot = {
         "schema_version": 1,
         "captured_at": utc_now(),
@@ -76,9 +78,13 @@ def build_snapshot(
         "model_scout": _bound_untrusted(
             redact_structure(
                 scout_data or {"status": "not_requested", "candidates": []}
-            )
+            ),
+            maximum_items=config.maximum_github_items,
         ),
-        "subagent_results": _bound_untrusted(redact_structure(subagent_results or [])),
+        "subagent_results": _bound_untrusted(
+            redact_structure(subagent_results or []),
+            maximum_items=config.maximum_github_items,
+        ),
     }
     return _fit_snapshot(snapshot, config.maximum_context_characters)
 
@@ -102,10 +108,21 @@ def _collect_files(
     entries: list[dict[str, Any]] = []
     total = 0
     truncated = False
-    candidates = sorted(
-        (path for path in root.rglob("*") if path.is_file()),
-        key=lambda path: _path_priority(path.relative_to(root).as_posix()),
-    )
+    candidates: list[Path] = []
+    for current, directory_names, filenames in os.walk(
+        root, topdown=True, followlinks=False
+    ):
+        current_path = Path(current)
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if name not in _SKIP_PARTS
+            and not name.endswith(".egg-info")
+            and not (current_path == root and name == ".caretaker")
+            and not (current_path / name).is_symlink()
+        ]
+        candidates.extend(current_path / name for name in filenames)
+    candidates.sort(key=lambda path: _path_priority(path.relative_to(root).as_posix()))
     for path in candidates:
         if path.is_symlink():
             continue
@@ -213,7 +230,7 @@ def _fit_snapshot(snapshot: dict[str, Any], maximum: int) -> dict[str, Any]:
     raise ValueError("snapshot metadata exceeds configured context budget")
 
 
-def _bound_untrusted(value: Any, *, depth: int = 0) -> Any:
+def _bound_untrusted(value: Any, *, maximum_items: int, depth: int = 0) -> Any:
     if depth > 8:
         return "[NESTING TRUNCATED]"
     if isinstance(value, str):
@@ -221,10 +238,15 @@ def _bound_untrusted(value: Any, *, depth: int = 0) -> Any:
             return value
         return value[:1500] + "\n[TEXT TRUNCATED]"
     if isinstance(value, list):
-        return [_bound_untrusted(item, depth=depth + 1) for item in value[:20]]
+        return [
+            _bound_untrusted(item, maximum_items=maximum_items, depth=depth + 1)
+            for item in value[:maximum_items]
+        ]
     if isinstance(value, dict):
         return {
-            str(key)[:200]: _bound_untrusted(item, depth=depth + 1)
+            str(key)[:200]: _bound_untrusted(
+                item, maximum_items=maximum_items, depth=depth + 1
+            )
             for key, item in list(value.items())[:40]
         }
     return value

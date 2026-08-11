@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from githubinference.config import CaretakerConfig
 from githubinference.policy import validate_decision, validate_unified_diff
-from githubinference.schema import extract_json_object, parse_decision
+from githubinference.schema import Action, Decision, extract_json_object, parse_decision
 
 
 class SchemaPolicyTests(unittest.TestCase):
@@ -71,6 +72,46 @@ class SchemaPolicyTests(unittest.TestCase):
         blocked = safe.replace("docs/note.md", ".github/workflows/pwn.yml")
         with self.assertRaisesRegex(ValueError, "protected path"):
             validate_unified_diff(blocked, self.config)
+
+        case_variant = safe.replace("docs/note.md", "security.md")
+        with self.assertRaisesRegex(ValueError, "protected path"):
+            validate_unified_diff(case_variant, self.config)
+
+        mismatched_target = safe.replace("+++ b/docs/note.md", "+++ b/docs/other.md")
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            validate_unified_diff(mismatched_target, self.config)
+
+        added = safe.replace("--- a/docs/note.md", "--- /dev/null")
+        deleted = safe.replace("+++ b/docs/note.md", "+++ /dev/null")
+        self.assertEqual(validate_unified_diff(added, self.config), ("docs/note.md",))
+        self.assertEqual(validate_unified_diff(deleted, self.config), ("docs/note.md",))
+
+    def test_unknown_implemented_action_mappings_fail_closed(self) -> None:
+        divergent = replace(
+            self.config, allowed_actions=self.config.allowed_actions | {"unhandled"}
+        )
+        with self.assertRaisesRegex(ValueError, "no implemented validator"):
+            parse_decision(
+                {
+                    "summary": "x",
+                    "risk_notes": [],
+                    "actions": [{"type": "unhandled"}],
+                    "continuation": "stop",
+                    "continuation_reason": "done",
+                },
+                divergent,
+            )
+
+        decision = Decision(
+            summary="x",
+            risk_notes=(),
+            actions=(Action("unhandled", {}),),
+            continuation="stop",
+            continuation_reason="done",
+        )
+        verdict = validate_decision(decision, self.config, {"issues": []})[0]
+        self.assertFalse(verdict.accepted)
+        self.assertIn("unsupported", verdict.reason)
 
     def test_model_candidate_requires_https_evidence(self) -> None:
         with self.assertRaisesRegex(ValueError, "HTTPS"):

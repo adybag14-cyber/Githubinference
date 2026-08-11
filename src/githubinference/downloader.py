@@ -154,7 +154,8 @@ def _download_once(
         headers["Authorization"] = f"Bearer {token}"
     if offset:
         headers["Range"] = f"bytes={offset}-"
-    request = urllib.request.Request(model_url(spec), headers=headers)
+    # model_url always builds HTTPS from validated registry components.
+    request = urllib.request.Request(model_url(spec), headers=headers)  # noqa: S310
     with urlopen(request, timeout=timeout_seconds) as response:  # type: ignore[attr-defined]
         status = getattr(response, "status", 200)
         append = bool(offset and status == 206)
@@ -179,6 +180,8 @@ def _download_once(
 
 
 def _valid_file(path: Path, spec: ModelSpec) -> bool:
+    # Intentionally rehash every cached model. A mutable mtime/size sidecar cannot
+    # establish integrity when the cache and marker share the same trust boundary.
     return path.stat().st_size == spec.size_bytes and sha256_file(path) == spec.sha256
 
 

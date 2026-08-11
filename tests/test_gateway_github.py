@@ -6,12 +6,18 @@ import os
 import threading
 import unittest
 import zipfile
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from githubinference.cli import main as cli_main
 from githubinference.gateway import InferenceGateway
-from githubinference.github_api import GitHubClient, _read_subagent_archive
+from githubinference.github_api import (
+    GitHubClient,
+    _read_subagent_archive,
+    _retry_after_seconds,
+)
 
 
 class _UpstreamHandler(BaseHTTPRequestHandler):
@@ -27,8 +33,8 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: object) -> None:
-        del format, args
+    def log_message(self, message_format: str, *args: object) -> None:
+        del message_format, args
 
 
 class _EndpointHandler(BaseHTTPRequestHandler):
@@ -44,8 +50,8 @@ class _EndpointHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: object) -> None:
-        del format, args
+    def log_message(self, message_format: str, *args: object) -> None:
+        del message_format, args
 
 
 class GatewayGitHubTests(unittest.TestCase):
@@ -56,6 +62,7 @@ class GatewayGitHubTests(unittest.TestCase):
         self.assertFalse(gateway.authorized(None))
         self.assertFalse(gateway.authorized("Bearer " + "b" * 32))
         self.assertTrue(gateway.authorized("Bearer " + "a" * 32))
+        self.assertFalse(gateway.authorized("Bearer " + "é" * 32))
 
     def test_gateway_does_not_forward_bearer_key(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
@@ -119,6 +126,39 @@ class GatewayGitHubTests(unittest.TestCase):
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("result.json", '{"summary":"ok"}')
         self.assertEqual(_read_subagent_archive(buffer.getvalue()), {"summary": "ok"})
+
+    def test_marker_scans_continue_beyond_first_page(self) -> None:
+        client = GitHubClient("owner/repo", "test-token")
+        calls: list[str] = []
+
+        def request(method: str, path: str, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            calls.append(f"{method} {path}")
+            if method != "GET":
+                self.fail(
+                    "marker scan should not write when page two contains the marker"
+                )
+            if path.endswith("page=1"):
+                return [{"body": "ordinary"} for _ in range(100)]
+            if path.endswith("page=2"):
+                return [{"body": "hidden marker"}]
+            self.fail(f"unexpected request: {path}")
+
+        with patch.object(GitHubClient, "_request", side_effect=request):
+            comment_result = client.comment_once(7, "body", "hidden marker")
+            issue_result = client.create_issue("title", "body", "hidden marker")
+        self.assertTrue(comment_result["skipped"])
+        self.assertTrue(issue_result["skipped"])
+        self.assertTrue(any("page=2" in call for call in calls))
+
+    def test_retry_after_accepts_seconds_http_date_and_invalid_values(self) -> None:
+        self.assertEqual(_retry_after_seconds("7"), 7)
+        future = format_datetime(
+            datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True
+        )
+        self.assertGreaterEqual(_retry_after_seconds(future), 0)
+        self.assertLessEqual(_retry_after_seconds(future), 30)
+        self.assertEqual(_retry_after_seconds("not-a-date"), 0)
 
 
 if __name__ == "__main__":

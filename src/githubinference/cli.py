@@ -238,7 +238,8 @@ def _serve(args: argparse.Namespace) -> int:
         draft_spec=draft_spec,
         draft_path=draft_path,
     )
-    os.execv(str(executable), command)
+    # Replace this wrapper with the pinned argv-based binary; a shell is never used.
+    os.execv(str(executable), command)  # noqa: S606
     return 0
 
 
@@ -310,7 +311,8 @@ def _snapshot(args: argparse.Namespace) -> int:
     subagent_results: list[dict[str, Any]] | None = None
     if args.github:
         client = GitHubClient.from_environment(require_token=True)
-        assert client is not None
+        if client is None:
+            raise ValueError("GitHub snapshot requested but no client is available")
         github_data = client.read_snapshot(config.maximum_github_items)
         subagent_results = client.collect_subagent_results()
     scout_data = scout_models() if args.scout else None
@@ -427,7 +429,8 @@ def _endpoint_smoke(args: argparse.Namespace) -> int:
             "endpoint smoke URL cannot contain credentials, query, or fragment"
         )
     url = f"{args.url.rstrip('/')}/v1/models"
-    request = urllib.request.Request(
+    # The URL was restricted to HTTPS or loopback HTTP above.
+    request = urllib.request.Request(  # noqa: S310
         url,
         headers={
             "Accept": "application/json",
@@ -461,7 +464,8 @@ def _benchmark(args: argparse.Namespace) -> int:
         "temperature": 0,
         "stream": False,
     }
-    request = urllib.request.Request(
+    # LlamaCppClient validated the loopback-only base URL.
+    request = urllib.request.Request(  # noqa: S310
         f"{validated_client.base_url}/v1/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},

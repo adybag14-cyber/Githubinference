@@ -82,15 +82,20 @@ class CaretakerConfig:
             raise ValueError("action text budget is invalid")
         if not 1 <= self.maximum_github_items <= 50:
             raise ValueError("GitHub item budget is invalid")
-        if not self.review_label or not self.write_environment_variable:
+        if (
+            not self.review_label
+            or not self.state_label
+            or not self.write_environment_variable
+        ):
             raise ValueError("required policy settings are empty")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", self.write_environment_variable):
             raise ValueError("write environment variable name is invalid")
         if not self.allowed_actions or not self.allowed_actions <= _IMPLEMENTED_ACTIONS:
             raise ValueError("allowed_actions includes an unsupported action")
-        for prefix in (self.report_path_prefix, self.proposal_path_prefix):
-            if not prefix.startswith(".caretaker/") or not prefix.endswith("/"):
-                raise ValueError("generated paths must stay beneath .caretaker/")
+        if self.report_path_prefix != ".caretaker/reports/":
+            raise ValueError("report path prefix must be .caretaker/reports/")
+        if self.proposal_path_prefix != ".caretaker/proposals/":
+            raise ValueError("proposal path prefix must be .caretaker/proposals/")
         for path in self.blocked_proposal_paths:
             if (
                 not path
@@ -109,8 +114,9 @@ class CaretakerConfig:
         return value
 
     def write_enabled(self, explicit: bool | None = None) -> bool:
-        if explicit is not None:
-            return explicit
-        return parse_bool(
+        environment_enabled = parse_bool(
             os.environ.get(self.write_environment_variable), default=False
         )
+        if explicit is None:
+            return environment_enabled
+        return explicit and environment_enabled

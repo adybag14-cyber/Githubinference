@@ -118,7 +118,10 @@ def _parse_action(raw: Any, config: CaretakerConfig) -> Action:
         "request_subagent": _request_subagent,
         "checkpoint": _checkpoint,
     }
-    return Action(action_type, validators[action_type](payload, config))
+    validator = validators.get(action_type)
+    if validator is None:
+        raise ValueError(f"action type has no implemented validator: {action_type!r}")
+    return Action(action_type, validator(payload, config))
 
 
 def _require_keys(

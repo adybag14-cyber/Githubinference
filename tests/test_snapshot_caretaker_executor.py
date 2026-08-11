@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from githubinference.backend import MockBackend
 from githubinference.caretaker import run_analysis
 from githubinference.config import CaretakerConfig
 from githubinference.executor import apply_decision
 from githubinference.snapshot import build_snapshot
+from githubinference.subagent import _validate_result
+from githubinference.util import append_job_summary
 
 
 class _FakeGitHub:
@@ -119,6 +124,20 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
         self.assertGreaterEqual(len(snapshot["issues"]), 1)
         self.assertGreaterEqual(len(snapshot["pull_requests"]), 1)
 
+    def test_snapshot_honors_configured_github_item_limit(self) -> None:
+        config = replace(self.config, maximum_github_items=25)
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot = build_snapshot(
+                temporary,
+                config,
+                repository="owner/repo",
+                ref="abc",
+                github_data={
+                    "issues": [{"number": index, "title": "x"} for index in range(25)]
+                },
+            )
+        self.assertEqual(len(snapshot["issues"]), 25)
+
     def test_analysis_writes_checkpoint_artifacts(self) -> None:
         backend = MockBackend(
             [
@@ -144,6 +163,40 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
             self.assertTrue((Path(temporary) / "analysis.json").is_file())
             self.assertTrue((Path(temporary) / "decision.json").is_file())
             self.assertEqual(len(backend.calls), 1)
+
+    def test_analysis_discards_over_budget_turn_and_checkpoints(self) -> None:
+        config = replace(self.config, maximum_actions_per_run=1)
+        backend = MockBackend(
+            [
+                {
+                    "summary": "first",
+                    "risk_notes": [],
+                    "actions": [{"type": "open_issue", "title": "one", "body": "x"}],
+                    "continuation": "continue",
+                    "continuation_reason": "more",
+                },
+                {
+                    "summary": "second",
+                    "risk_notes": [],
+                    "actions": [{"type": "open_issue", "title": "two", "body": "y"}],
+                    "continuation": "stop",
+                    "continuation_reason": "done",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = run_analysis(
+                backend=backend,
+                snapshot={"issues": [], "pull_requests": []},
+                config=config,
+                runtime_minutes=15,
+                output_directory=temporary,
+                run_id="budget-test",
+            )
+        self.assertEqual(len(result.decision.actions), 1)
+        self.assertTrue(result.checkpoint_required)
+        self.assertTrue(result.next_run_requested)
+        self.assertIn("discarded", result.decision.continuation_reason)
 
     def test_disabled_write_gate_keeps_patch_as_local_evidence(self) -> None:
         decision = {
@@ -199,7 +252,14 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
             "issues": [{"number": 5, "labels": [{"name": "caretaker:review"}]}],
             "pull_requests": [],
         }
-        with tempfile.TemporaryDirectory() as temporary:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.dict(
+                os.environ,
+                {self.config.write_environment_variable: "true"},
+                clear=False,
+            ),
+        ):
             result = apply_decision(
                 decision_data=decision,
                 snapshot=snapshot,
@@ -213,6 +273,37 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
         self.assertEqual(
             [call[0] for call in fake.calls], ["comment", "subagent", "report"]
         )
+
+    def test_explicit_write_flag_cannot_bypass_environment_gate(self) -> None:
+        variable = self.config.write_environment_variable
+        with patch.dict(os.environ, {variable: "false"}, clear=False):
+            self.assertFalse(self.config.write_enabled(True))
+        with patch.dict(os.environ, {variable: "true"}, clear=False):
+            self.assertTrue(self.config.write_enabled(True))
+            self.assertFalse(self.config.write_enabled(False))
+
+    def test_required_labels_and_generated_prefixes_are_fixed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "required policy"):
+            replace(self.config, state_label="").validate()
+        with self.assertRaisesRegex(ValueError, "report path prefix"):
+            replace(self.config, report_path_prefix=".caretaker/other/").validate()
+        with self.assertRaisesRegex(ValueError, "proposal path prefix"):
+            replace(self.config, proposal_path_prefix=".caretaker/other/").validate()
+
+    def test_non_object_subagent_result_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not an object"):
+            _validate_result([{"summary": "bad"}])
+
+    def test_job_summary_redacts_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            summary = Path(temporary) / "summary.md"
+            with patch.dict(
+                os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}, clear=False
+            ):
+                append_job_summary("token=should-not-appear")
+            rendered = summary.read_text(encoding="utf-8")
+        self.assertIn("[REDACTED]", rendered)
+        self.assertNotIn("should-not-appear", rendered)
 
 
 if __name__ == "__main__":

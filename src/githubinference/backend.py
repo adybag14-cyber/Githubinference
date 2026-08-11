@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import threading
@@ -54,11 +55,12 @@ class LlamaCppClient:
 
     def health(self) -> bool:
         try:
-            with self._opener.open(
+            # The scheme and loopback host were validated in __init__.
+            with self._opener.open(  # noqa: S310
                 f"{self.base_url}/health", timeout=min(10, self.timeout_seconds)
             ) as response:
                 return 200 <= response.status < 300
-        except (OSError, urllib.error.URLError):
+        except (OSError, http.client.HTTPException):
             return False
 
     def wait_until_ready(
@@ -102,7 +104,8 @@ class LlamaCppClient:
             "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {"type": "json_object"},
         }
-        request = urllib.request.Request(
+        # The scheme and loopback host were validated in __init__; path is fixed.
+        request = urllib.request.Request(  # noqa: S310
             f"{self.base_url}/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={
@@ -112,7 +115,9 @@ class LlamaCppClient:
             method="POST",
         )
         try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(  # noqa: S310
+                request, timeout=self.timeout_seconds
+            ) as response:
                 raw = response.read(4 * 1024 * 1024 + 1)
         except urllib.error.HTTPError as exc:
             detail = exc.read(4096).decode("utf-8", errors="replace")

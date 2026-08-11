@@ -31,11 +31,36 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", trigger_block)
         self.assertNotIn("schedule:", trigger_block)
         self.assertNotIn("pull_request:", trigger_block)
+        self.assertIn(
+            "github.ref_name == github.event.repository.default_branch", endpoint
+        )
         self.assertIn("environment: inference", endpoint)
         self.assertIn("secrets.INFERENCE_API_KEY", endpoint)
         self.assertIn("secrets.CLOUDFLARE_TUNNEL_TOKEN", endpoint)
         self.assertIn("--token-file", endpoint)
+        self.assertGreaterEqual(endpoint.count("--connect-timeout 2 --max-time 5"), 2)
         self.assertNotIn("Upload sanitized service logs", endpoint)
+
+    def test_ci_and_model_smoke_cover_submitted_runtime_changes(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("fetch-depth: 0", ci)
+        self.assertIn('git diff --check "${BASE_SHA}" "${GITHUB_SHA}"', ci)
+        smoke = (WORKFLOWS / "model-smoke.yml").read_text(encoding="utf-8")
+        for path in (
+            "src/githubinference/cli.py",
+            "src/githubinference/snapshot.py",
+            "src/githubinference/caretaker.py",
+        ):
+            self.assertIn(path, smoke)
+
+    def test_cached_runtime_assets_are_cryptographically_revalidated(self) -> None:
+        cloudflared = (ROOT / "scripts" / "install_cloudflared.sh").read_text(
+            encoding="utf-8"
+        )
+        llama = (ROOT / "scripts" / "install_llama.sh").read_text(encoding="utf-8")
+        self.assertIn('"${BINARY}" | sha256sum --check --status', cloudflared)
+        self.assertIn('"${CACHED_ARCHIVE}" | sha256sum --check --status', llama)
+        self.assertIn("verified-${LLAMA_SHA256:0:12}", llama)
 
 
 if __name__ == "__main__":

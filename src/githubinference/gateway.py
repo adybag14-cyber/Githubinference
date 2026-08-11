@@ -48,7 +48,12 @@ class InferenceGateway:
         prefix = "Bearer "
         if not header or not header.startswith(prefix):
             return False
-        return hmac.compare_digest(header[len(prefix) :], self.api_key)
+        try:
+            supplied = header[len(prefix) :].encode("utf-8")
+            expected = self.api_key.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return hmac.compare_digest(supplied, expected)
 
     def proxy(
         self, method: str, path: str, payload: bytes | None
@@ -56,7 +61,8 @@ class InferenceGateway:
         if not self.inflight.acquire(blocking=False):
             return _json_response(HTTPStatus.TOO_MANY_REQUESTS, "the CPU model is busy")
         try:
-            request = urllib.request.Request(
+            # self.upstream is validated as loopback HTTP during initialization.
+            request = urllib.request.Request(  # noqa: S310
                 f"{self.upstream}{path}",
                 data=payload,
                 method=method,
@@ -107,6 +113,8 @@ def serve_gateway(
         raise ValueError("gateway port is invalid")
     gateway = InferenceGateway(api_key=api_key, upstream=upstream)
 
+    # BaseHTTPRequestHandler's default logger records the request line and status,
+    # but never request headers or bodies that could contain keys or prompts.
     class Handler(BaseHTTPRequestHandler):
         server_version = "GithubinferenceGateway/0.1"
         sys_version = ""
@@ -207,11 +215,6 @@ def serve_gateway(
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format: str, *args: Any) -> None:
-            # The path and status are useful; headers and bodies (which can contain
-            # the bearer key or prompts) are deliberately never logged.
-            super().log_message(format, *args)
-
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.serve_forever(poll_interval=0.5)
@@ -220,11 +223,9 @@ def serve_gateway(
 def _json_response(
     status: int, message: str, *, key: str = "message"
 ) -> tuple[int, str, bytes]:
-    body = json.dumps(
-        {
-            "error" if status >= 400 else key: {"message": message}
-            if status >= 400
-            else message
-        }
-    ).encode("utf-8")
+    if status >= 400:
+        envelope: dict[str, Any] = {"error": {"message": message}}
+    else:
+        envelope = {key: message}
+    body = json.dumps(envelope).encode("utf-8")
     return int(status), "application/json", body

@@ -6,9 +6,9 @@ readonly CLOUDFLARED_SHA256="9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972
 readonly CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_TAG}/cloudflared-linux-amd64"
 readonly INSTALL_DIR="${1:-.runtime/cloudflared}"
 readonly BINARY="${INSTALL_DIR}/cloudflared"
-readonly STAMP="${INSTALL_DIR}/.asset.sha256"
 
-if [[ -x "${BINARY}" && -f "${STAMP}" ]] && grep -qx "${CLOUDFLARED_SHA256}" "${STAMP}"; then
+if [[ -x "${BINARY}" ]] &&
+  printf '%s  %s\n' "${CLOUDFLARED_SHA256}" "${BINARY}" | sha256sum --check --status; then
   printf '%s\n' "${BINARY}"
   exit 0
 fi
@@ -23,5 +23,4 @@ curl --proto '=https' --tlsv1.2 --fail --location --retry 4 --retry-all-errors \
   --output "${download}" "${CLOUDFLARED_URL}"
 printf '%s  %s\n' "${CLOUDFLARED_SHA256}" "${download}" | sha256sum --check --status
 install -m 0755 "${download}" "${BINARY}"
-printf '%s\n' "${CLOUDFLARED_SHA256}" > "${STAMP}"
 printf '%s\n' "${BINARY}"
