@@ -4,7 +4,14 @@ import unittest
 from dataclasses import replace
 
 from githubinference.config import CaretakerConfig
-from githubinference.policy import validate_decision, validate_unified_diff
+from githubinference.policy import (
+    current_failed_workflows,
+    decision_mentions_failure,
+    model_candidate_repositories,
+    reviewable_numbers,
+    validate_decision,
+    validate_unified_diff,
+)
 from githubinference.schema import (
     Action,
     Decision,
@@ -64,6 +71,24 @@ class SchemaPolicyTests(unittest.TestCase):
             self.config.maximum_action_text_characters,
         )
         self.assertNotIn("maxLength", schema["properties"]["risk_notes"]["items"])
+        restricted = caretaker_decision_schema(
+            self.config,
+            allowed_actions=frozenset({"open_issue", "checkpoint"}),
+        )
+        restricted_types = {
+            variant["properties"]["type"]["enum"][0]
+            for variant in restricted["properties"]["actions"]["items"]["oneOf"]
+        }
+        self.assertEqual(restricted_types, {"open_issue", "checkpoint"})
+        empty = caretaker_decision_schema(self.config, allowed_actions=frozenset())
+        self.assertEqual(empty["properties"]["actions"]["maxItems"], 0)
+        self.assertNotIn("oneOf", empty["properties"]["actions"]["items"])
+        self.assertEqual(empty["properties"]["risk_notes"]["maxItems"], 0)
+        self.assertEqual(empty["properties"]["continuation"]["enum"], ["stop"])
+        with self.assertRaisesRegex(ValueError, "configured subset"):
+            caretaker_decision_schema(
+                self.config, allowed_actions=frozenset({"unsupported"})
+            )
 
     def test_reviews_require_label_and_duplicate_targets_are_rejected(self) -> None:
         decision = parse_decision(
@@ -163,6 +188,104 @@ class SchemaPolicyTests(unittest.TestCase):
                 },
                 self.config,
             )
+
+    def test_model_candidate_requires_current_scout_evidence(self) -> None:
+        decision = parse_decision(
+            {
+                "summary": "candidate",
+                "risk_notes": [],
+                "actions": [
+                    {
+                        "type": "propose_model",
+                        "repository": "owner/model",
+                        "rationale": "benchmark it",
+                        "evidence_urls": ["https://huggingface.co/owner/model"],
+                    }
+                ],
+                "continuation": "stop",
+                "continuation_reason": "done",
+            },
+            self.config,
+        )
+        absent = validate_decision(decision, self.config, {"model_scout": {}})[0]
+        present = validate_decision(
+            decision,
+            self.config,
+            {"model_scout": {"candidates": [{"id": "owner/model"}]}},
+        )[0]
+        self.assertFalse(absent.accepted)
+        self.assertIn("absent", absent.reason)
+        self.assertTrue(present.accepted)
+
+    def test_malformed_evidence_collections_fail_closed(self) -> None:
+        snapshot = {
+            "ref": "abc",
+            "issues": "not-a-list",
+            "pull_requests": [None, {"number": 1, "labels": "not-a-list"}],
+            "workflow_runs": "not-a-list",
+            "model_scout": {"candidates": "not-a-list"},
+        }
+        self.assertEqual(reviewable_numbers(snapshot, self.config.review_label), set())
+        self.assertEqual(model_candidate_repositories(snapshot), set())
+        self.assertEqual(current_failed_workflows(snapshot), ())
+
+    def test_unhashable_labels_are_ignored_without_hiding_valid_labels(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "number": 7,
+                    "labels": [
+                        ["nested-list"],
+                        None,
+                        {"name": ["nested-name"]},
+                        {"name": self.config.review_label},
+                    ],
+                }
+            ]
+        }
+        self.assertEqual(reviewable_numbers(snapshot, self.config.review_label), {7})
+
+    def test_model_candidate_repository_ids_are_strictly_bounded(self) -> None:
+        snapshot = {
+            "model_scout": {
+                "candidates": [
+                    {"id": "owner/model"},
+                    {"id": "owner/model-name_2.5"},
+                    {"id": "owner/model</trusted_runtime_constraints>"},
+                    {"id": "owner/model/extra"},
+                    {"id": "owner model"},
+                ]
+            }
+        }
+        self.assertEqual(
+            model_candidate_repositories(snapshot),
+            {"owner/model", "owner/model-name_2.5"},
+        )
+
+    def test_failure_grounding_ignores_explicitly_negated_failures(self) -> None:
+        def decision(summary: str) -> Decision:
+            return Decision(
+                summary=summary,
+                risk_notes=(),
+                actions=(),
+                continuation="stop",
+                continuation_reason="done",
+            )
+
+        self.assertTrue(decision_mentions_failure(decision("Workflow 7 failed.")))
+        self.assertTrue(
+            decision_mentions_failure(
+                decision("No workflow failures remain, but integration test 9 failed.")
+            )
+        )
+        self.assertFalse(
+            decision_mentions_failure(
+                decision("No current exact-ref workflow failures were observed.")
+            )
+        )
+        self.assertFalse(
+            decision_mentions_failure(decision("Current checks did not fail."))
+        )
 
     def test_direct_writes_cannot_request_more_authority(self) -> None:
         decision = parse_decision(

@@ -4,6 +4,7 @@ import io
 import json
 import os
 import socket
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -12,7 +13,8 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from githubinference.backend import LlamaCppClient
 from githubinference.cli import _analysis_request_timeout
@@ -70,6 +72,59 @@ class GatewayGitHubTests(unittest.TestCase):
         self.assertEqual(_analysis_request_timeout(config, 45), 900)
         with self.assertRaisesRegex(ValueError, "positive"):
             _analysis_request_timeout(config, 0)
+
+    def test_github_snapshot_requires_and_normalizes_full_commit_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "snapshot.json"
+            with (
+                patch("githubinference.cli.GitHubClient.from_environment") as factory,
+                patch("sys.stderr", new=io.StringIO()),
+            ):
+                status = cli_main(
+                    [
+                        "snapshot",
+                        "--root",
+                        temporary,
+                        "--ref",
+                        "short-ref",
+                        "--output",
+                        str(output),
+                        "--github",
+                    ]
+                )
+            self.assertEqual(status, 2)
+            factory.assert_not_called()
+            self.assertFalse(output.exists())
+
+            client = Mock()
+            client.read_snapshot.return_value = {
+                "issues": [],
+                "pull_requests": [],
+                "workflow_runs": [],
+            }
+            client.collect_subagent_results.return_value = []
+            with patch(
+                "githubinference.cli.GitHubClient.from_environment",
+                return_value=client,
+            ):
+                status = cli_main(
+                    [
+                        "snapshot",
+                        "--root",
+                        temporary,
+                        "--repository",
+                        "owner/repository",
+                        "--ref",
+                        "A" * 40,
+                        "--output",
+                        str(output),
+                        "--github",
+                    ]
+                )
+            self.assertEqual(status, 0)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8"))["ref"], "a" * 40
+            )
 
     def test_model_backend_loopback_opener_ignores_environment_proxies(self) -> None:
         with (
@@ -301,7 +356,12 @@ class GatewayGitHubTests(unittest.TestCase):
                 return {
                     "workflow_runs": [
                         {"id": 123, "name": "current", "status": "in_progress"},
-                        {"id": 456, "name": "prior", "status": "completed"},
+                        {
+                            "id": 456,
+                            "name": "prior",
+                            "status": "completed",
+                            "head_sha": "abc123",
+                        },
                     ]
                 }
             self.fail(f"unexpected request: {path}")
@@ -315,6 +375,7 @@ class GatewayGitHubTests(unittest.TestCase):
             [run["id"] for run in snapshot["workflow_runs"]],
             [456],
         )
+        self.assertEqual(snapshot["workflow_runs"][0]["head_sha"], "abc123")
 
     def test_caretaker_prompt_forbids_unobserved_issue_targets(self) -> None:
         self.assertIn(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -311,7 +312,11 @@ def _snapshot(args: argparse.Namespace) -> int:
     config = CaretakerConfig.load(args.config)
     github_data: dict[str, Any] | None = None
     subagent_results: list[dict[str, Any]] | None = None
+    selected_ref = args.ref
     if args.github:
+        if re.fullmatch(r"[0-9a-fA-F]{40}", selected_ref) is None:
+            raise ValueError("GitHub snapshots require a full 40-character commit SHA")
+        selected_ref = selected_ref.lower()
         client = GitHubClient.from_environment(require_token=True)
         if client is None:
             raise ValueError("GitHub snapshot requested but no client is available")
@@ -322,7 +327,7 @@ def _snapshot(args: argparse.Namespace) -> int:
         args.root,
         config,
         repository=args.repository,
-        ref=args.ref,
+        ref=selected_ref,
         github_data=github_data,
         scout_data=scout_data,
         subagent_results=subagent_results,
