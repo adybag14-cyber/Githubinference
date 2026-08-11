@@ -59,6 +59,11 @@ class SchemaPolicyTests(unittest.TestCase):
         }
         self.assertEqual(action_types, self.config.allowed_actions)
         self.assertTrue(all(not item["additionalProperties"] for item in variants))
+        self.assertEqual(
+            schema["properties"]["summary"]["maxLength"],
+            self.config.maximum_action_text_characters,
+        )
+        self.assertNotIn("maxLength", schema["properties"]["risk_notes"]["items"])
 
     def test_reviews_require_label_and_duplicate_targets_are_rejected(self) -> None:
         decision = parse_decision(

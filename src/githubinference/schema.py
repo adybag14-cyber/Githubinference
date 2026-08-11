@@ -40,13 +40,17 @@ class Decision:
 def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
     """Return the strict generation schema enforced by the local model server."""
     text = {"type": "string"}
+    action_text = {
+        "type": "string",
+        "maxLength": config.maximum_action_text_characters,
+    }
     action_variants = {
         "review_issue": {
             "type": "object",
             "properties": {
                 "type": {"enum": ["review_issue"]},
                 "issue_number": {"type": "integer", "minimum": 1},
-                "comment": text,
+                "comment": action_text,
             },
             "required": ["type", "issue_number", "comment"],
             "additionalProperties": False,
@@ -55,8 +59,8 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["open_issue"]},
-                "title": text,
-                "body": text,
+                "title": {"type": "string", "maxLength": 180},
+                "body": action_text,
             },
             "required": ["type", "title", "body"],
             "additionalProperties": False,
@@ -65,9 +69,12 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["propose_change"]},
-                "title": text,
-                "description": text,
-                "patch": text,
+                "title": {"type": "string", "maxLength": 180},
+                "description": {"type": "string", "maxLength": 5000},
+                "patch": {
+                    "type": "string",
+                    "maxLength": config.maximum_proposal_characters,
+                },
             },
             "required": ["type", "title", "description", "patch"],
             "additionalProperties": False,
@@ -76,12 +83,12 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["propose_model"]},
-                "repository": text,
-                "revision": text,
-                "rationale": text,
+                "repository": {"type": "string", "maxLength": 160},
+                "revision": {"type": "string", "maxLength": 80},
+                "rationale": action_text,
                 "evidence_urls": {
                     "type": "array",
-                    "items": text,
+                    "items": {"type": "string", "maxLength": 500},
                     "maxItems": 6,
                 },
             },
@@ -92,10 +99,10 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["request_subagent"]},
-                "task": text,
+                "task": {"type": "string", "maxLength": 4000},
                 "scope": {
                     "type": "array",
-                    "items": text,
+                    "items": {"type": "string", "maxLength": 300},
                     "maxItems": 12,
                 },
             },
@@ -106,7 +113,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "type": {"enum": ["checkpoint"]},
-                "note": text,
+                "note": {"type": "string", "maxLength": 4000},
             },
             "required": ["type", "note"],
             "additionalProperties": False,
@@ -115,7 +122,9 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "summary": text,
+            "summary": action_text,
+            # llama.cpp b10333 rejects the exact {0,2000} grammar repetition.
+            # parse_decision remains authoritative for the 2000-character risk cap.
             "risk_notes": {
                 "type": "array",
                 "items": text,
@@ -132,7 +141,7 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
                 "maxItems": config.maximum_actions_per_run,
             },
             "continuation": {"enum": ["continue", "stop"]},
-            "continuation_reason": text,
+            "continuation_reason": {"type": "string", "maxLength": 3000},
         },
         "required": [
             "summary",
