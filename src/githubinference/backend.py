@@ -21,7 +21,11 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
 
 class ChatBackend(Protocol):
     def chat_json(
-        self, messages: Sequence[dict[str, str]], *, max_tokens: int = 2048
+        self,
+        messages: Sequence[dict[str, str]],
+        *,
+        max_tokens: int = 2048,
+        response_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -95,7 +99,11 @@ class LlamaCppClient:
         messages: Sequence[dict[str, str]],
         *,
         max_tokens: int = 2048,
+        response_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        response_format: dict[str, Any] = {"type": "json_object"}
+        if response_schema is not None:
+            response_format["schema"] = response_schema
         payload = {
             "model": self.model,
             "messages": list(messages),
@@ -107,7 +115,7 @@ class LlamaCppClient:
             "stream": False,
             "reasoning_effort": "none",
             "chat_template_kwargs": {"enable_thinking": False},
-            "response_format": {"type": "json_object"},
+            "response_format": response_format,
         }
         # The scheme and loopback host were validated in __init__; path is fixed.
         request = urllib.request.Request(  # noqa: S310
@@ -150,16 +158,23 @@ class MockBackend:
         self._responses = list(responses)
         self._lock = threading.Lock()
         self.calls: list[list[dict[str, str]]] = []
+        self.response_schemas: list[dict[str, Any] | None] = []
 
     def chat_json(
         self,
         messages: Sequence[dict[str, str]],
         *,
         max_tokens: int = 2048,
+        response_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         del max_tokens
         with self._lock:
             self.calls.append(list(messages))
+            self.response_schemas.append(
+                json.loads(json.dumps(response_schema))
+                if response_schema is not None
+                else None
+            )
             index = min(len(self.calls) - 1, len(self._responses) - 1)
             return json.loads(json.dumps(self._responses[index]))
 

@@ -37,6 +37,123 @@ class Decision:
         }
 
 
+def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
+    """Return the strict generation schema enforced by the local model server."""
+    text = {"type": "string"}
+    action_text = {
+        "type": "string",
+        "maxLength": config.maximum_action_text_characters,
+    }
+    action_variants = {
+        "review_issue": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["review_issue"]},
+                "issue_number": {"type": "integer", "minimum": 1},
+                "comment": action_text,
+            },
+            "required": ["type", "issue_number", "comment"],
+            "additionalProperties": False,
+        },
+        "open_issue": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["open_issue"]},
+                "title": {"type": "string", "maxLength": 180},
+                "body": action_text,
+            },
+            "required": ["type", "title", "body"],
+            "additionalProperties": False,
+        },
+        "propose_change": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["propose_change"]},
+                "title": {"type": "string", "maxLength": 180},
+                "description": {"type": "string", "maxLength": 5000},
+                "patch": {
+                    "type": "string",
+                    "maxLength": config.maximum_proposal_characters,
+                },
+            },
+            "required": ["type", "title", "description", "patch"],
+            "additionalProperties": False,
+        },
+        "propose_model": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["propose_model"]},
+                "repository": {"type": "string", "maxLength": 160},
+                "revision": {"type": "string", "maxLength": 80},
+                "rationale": action_text,
+                "evidence_urls": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 500},
+                    "maxItems": 6,
+                },
+            },
+            "required": ["type", "repository", "rationale"],
+            "additionalProperties": False,
+        },
+        "request_subagent": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["request_subagent"]},
+                "task": {"type": "string", "maxLength": 4000},
+                "scope": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 300},
+                    "maxItems": 12,
+                },
+            },
+            "required": ["type", "task"],
+            "additionalProperties": False,
+        },
+        "checkpoint": {
+            "type": "object",
+            "properties": {
+                "type": {"enum": ["checkpoint"]},
+                "note": {"type": "string", "maxLength": 4000},
+            },
+            "required": ["type", "note"],
+            "additionalProperties": False,
+        },
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "summary": action_text,
+            # llama.cpp b10333 rejects the exact {0,2000} grammar repetition.
+            # parse_decision remains authoritative for the 2000-character risk cap.
+            "risk_notes": {
+                "type": "array",
+                "items": text,
+                "maxItems": 12,
+            },
+            "actions": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        action_variants[action_type]
+                        for action_type in sorted(config.allowed_actions)
+                    ]
+                },
+                "maxItems": config.maximum_actions_per_run,
+            },
+            "continuation": {"enum": ["continue", "stop"]},
+            "continuation_reason": {"type": "string", "maxLength": 3000},
+        },
+        "required": [
+            "summary",
+            "risk_notes",
+            "actions",
+            "continuation",
+            "continuation_reason",
+        ],
+        "additionalProperties": False,
+    }
+
+
 def extract_json_object(content: str) -> dict[str, Any]:
     candidate = content.strip()
     if candidate.startswith("```"):
