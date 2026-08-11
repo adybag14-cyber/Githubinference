@@ -279,9 +279,11 @@ def _caretaker_smoke(args: argparse.Namespace) -> int:
     config = CaretakerConfig.load(args.config)
     spec = _registry(args).get(args.model_id)
     snapshot = load_json(args.snapshot)
+    runtime_minutes = 15
     client = LlamaCppClient(
         args.base_url,
         model=spec.model_id,
+        timeout_seconds=_analysis_request_timeout(config, runtime_minutes),
         temperature=spec.temperature,
         top_p=spec.top_p,
         top_k=spec.top_k,
@@ -294,7 +296,7 @@ def _caretaker_smoke(args: argparse.Namespace) -> int:
         backend=client,
         snapshot=snapshot,
         config=replace(config, maximum_turns=1),
-        runtime_minutes=15,
+        runtime_minutes=runtime_minutes,
         output_directory=destination,
         run_id="caretaker-contract-smoke",
         model_id=spec.model_id,
@@ -338,6 +340,7 @@ def _analyze(args: argparse.Namespace) -> int:
     backend = LlamaCppClient(
         args.base_url,
         model=spec.model_id,
+        timeout_seconds=_analysis_request_timeout(config, runtime),
         temperature=spec.temperature,
         top_p=spec.top_p,
         top_k=spec.top_k,
@@ -354,6 +357,14 @@ def _analyze(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result.to_dict(), sort_keys=True))
     return 0
+
+
+def _analysis_request_timeout(config: CaretakerConfig, runtime_minutes: int) -> int:
+    if runtime_minutes <= 0:
+        raise ValueError("runtime_minutes must be positive")
+    reserve_minutes = min(config.deadline_reserve_minutes, runtime_minutes - 1)
+    work_seconds = (runtime_minutes - reserve_minutes) * 60
+    return max(30, min(900, work_seconds - 15))
 
 
 def _apply(args: argparse.Namespace) -> int:

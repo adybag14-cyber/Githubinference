@@ -14,7 +14,10 @@ from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
+from githubinference.backend import LlamaCppClient
+from githubinference.cli import _analysis_request_timeout
 from githubinference.cli import main as cli_main
+from githubinference.config import CaretakerConfig
 from githubinference.gateway import InferenceGateway, serve_gateway
 from githubinference.github_api import (
     GitHubClient,
@@ -58,9 +61,31 @@ class _EndpointHandler(BaseHTTPRequestHandler):
 
 
 class GatewayGitHubTests(unittest.TestCase):
+    def test_analysis_request_timeout_tracks_the_bounded_work_window(self) -> None:
+        config = CaretakerConfig.load()
+        self.assertEqual(_analysis_request_timeout(config, 1), 45)
+        self.assertEqual(_analysis_request_timeout(config, 15), 285)
+        self.assertEqual(_analysis_request_timeout(config, 20), 585)
+        self.assertEqual(_analysis_request_timeout(config, 45), 900)
+        with self.assertRaisesRegex(ValueError, "positive"):
+            _analysis_request_timeout(config, 0)
+
+    def test_model_backend_loopback_opener_ignores_environment_proxies(self) -> None:
+        with (
+            patch("githubinference.backend.urllib.request.ProxyHandler") as proxy,
+            patch("githubinference.backend.urllib.request.build_opener") as build,
+        ):
+            backend = LlamaCppClient()
+        proxy.assert_called_once_with({})
+        self.assertEqual(len(build.call_args.args), 2)
+        self.assertIs(build.call_args.args[0], proxy.return_value)
+        self.assertIs(backend._opener, build.return_value)
+
     def test_gateway_requires_long_key_and_constant_bearer_match(self) -> None:
         with self.assertRaisesRegex(ValueError, "32"):
             InferenceGateway(api_key="short")
+        with self.assertRaisesRegex(ValueError, "timeout"):
+            LlamaCppClient(timeout_seconds=0)
         gateway = InferenceGateway(api_key="a" * 32)
         self.assertFalse(gateway.authorized(None))
         self.assertFalse(gateway.authorized("Bearer " + "b" * 32))
