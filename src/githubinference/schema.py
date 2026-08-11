@@ -37,8 +37,17 @@ class Decision:
         }
 
 
-def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
+def caretaker_decision_schema(
+    config: CaretakerConfig,
+    *,
+    allowed_actions: frozenset[str] | None = None,
+) -> dict[str, Any]:
     """Return the strict generation schema enforced by the local model server."""
+    selected_actions = (
+        config.allowed_actions if allowed_actions is None else allowed_actions
+    )
+    if not selected_actions <= config.allowed_actions:
+        raise ValueError("generation actions must be a configured subset")
     text = {"type": "string"}
     action_text = {
         "type": "string",
@@ -119,28 +128,49 @@ def caretaker_decision_schema(config: CaretakerConfig) -> dict[str, Any]:
             "additionalProperties": False,
         },
     }
+    actions_schema: dict[str, Any]
+    if selected_actions:
+        actions_schema = {
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    action_variants[action_type]
+                    for action_type in sorted(selected_actions)
+                ]
+            },
+            "maxItems": config.maximum_actions_per_run,
+        }
+    else:
+        # A healthy snapshot has no evidence-derived action authority.  An empty
+        # array is expressible by the pinned llama.cpp JSON-schema grammar and
+        # prevents the model from fabricating work merely to fill an action.
+        actions_schema = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            "maxItems": 0,
+        }
+
+    risk_notes_schema = {
+        "type": "array",
+        "items": text,
+        "maxItems": 12 if selected_actions else 0,
+    }
+
     return {
         "type": "object",
         "properties": {
             "summary": action_text,
             # llama.cpp b10333 rejects the exact {0,2000} grammar repetition.
             # parse_decision remains authoritative for the 2000-character risk cap.
-            "risk_notes": {
-                "type": "array",
-                "items": text,
-                "maxItems": 12,
+            "risk_notes": risk_notes_schema,
+            "actions": actions_schema,
+            "continuation": {
+                "enum": ["continue", "stop"] if selected_actions else ["stop"]
             },
-            "actions": {
-                "type": "array",
-                "items": {
-                    "oneOf": [
-                        action_variants[action_type]
-                        for action_type in sorted(config.allowed_actions)
-                    ]
-                },
-                "maxItems": config.maximum_actions_per_run,
-            },
-            "continuation": {"enum": ["continue", "stop"]},
             "continuation_reason": {"type": "string", "maxLength": 3000},
         },
         "required": [

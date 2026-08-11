@@ -100,6 +100,7 @@ class GitHubClient:
                 "status": str(item.get("status", ""))[:80],
                 "conclusion": str(item.get("conclusion", ""))[:80],
                 "head_branch": str(item.get("head_branch", ""))[:200],
+                "head_sha": str(item.get("head_sha", ""))[:80],
                 "created_at": item.get("created_at"),
                 "updated_at": item.get("updated_at"),
                 "html_url": item.get("html_url"),

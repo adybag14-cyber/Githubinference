@@ -301,7 +301,12 @@ class GatewayGitHubTests(unittest.TestCase):
                 return {
                     "workflow_runs": [
                         {"id": 123, "name": "current", "status": "in_progress"},
-                        {"id": 456, "name": "prior", "status": "completed"},
+                        {
+                            "id": 456,
+                            "name": "prior",
+                            "status": "completed",
+                            "head_sha": "abc123",
+                        },
                     ]
                 }
             self.fail(f"unexpected request: {path}")
@@ -315,6 +320,7 @@ class GatewayGitHubTests(unittest.TestCase):
             [run["id"] for run in snapshot["workflow_runs"]],
             [456],
         )
+        self.assertEqual(snapshot["workflow_runs"][0]["head_sha"], "abc123")
 
     def test_caretaker_prompt_forbids_unobserved_issue_targets(self) -> None:
         self.assertIn(

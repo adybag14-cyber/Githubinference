@@ -10,9 +10,19 @@ from .schema import Action, Decision
 
 _DIFF_HEADER = re.compile(r"^diff --git a/(.+) b/(.+)$")
 _AUTHORITY_REQUEST = re.compile(
-    r"(?i)\b(?:CARETAKER_WRITE_ENABLED|write[- ]gate|enable(?:d|ment|ing)? writes?|"
-    r"workflow permissions?|repository settings?|environment secrets?)\b"
+    r"\b(?:CARETAKER_WRITE_ENABLED|write[- ]gate|enable(?:d|ment|ing)? writes?|"
+    r"workflow permissions?|repository settings?|environment secrets?|"
+    r"maximum_(?:runtime_minutes|turns|actions_per_run|issue_comments_per_run|"
+    r"new_issues_per_run|subagents_per_run|context_characters|file_characters|"
+    r"proposal_characters|action_text_characters|github_items)|"
+    r"deadline_reserve_minutes|report[- ]only (?:mode|operation|caretaker))\b|"
+    r"\bcaretaker.{0,80}\bactivat(?:e|ed|ing|ion)\b|"
+    r"\bactivat(?:e|ed|ing|ion).{0,80}\bcaretaker\b|"
+    r"\b(?:caretaker|policy|safety).{0,80}\b(?:limits?|budgets?|bounds?|caps?)\b"
+    r".{0,40}\b(?:too restrictive|insufficient)\b",
+    re.IGNORECASE,
 )
+_FAILURE_CLAIM = re.compile(r"(?i)\b(?:failed|failure|failures|failing)\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +47,8 @@ def validate_decision(
     config: CaretakerConfig,
     snapshot: dict[str, Any],
 ) -> tuple[ActionVerdict, ...]:
-    reviewable = _reviewable_numbers(snapshot, config.review_label)
+    reviewable = reviewable_numbers(snapshot, config.review_label)
+    model_candidates = model_candidate_repositories(snapshot)
     comments = 0
     new_issues = 0
     subagents = 0
@@ -57,7 +68,7 @@ def validate_decision(
                 accepted, reason = False, "duplicate comment target in one run"
             elif not action.payload["comment"].strip():
                 accepted, reason = False, "issue comment is empty"
-            elif _requests_authority(action.payload["comment"]):
+            elif requests_authority(action.payload["comment"]):
                 accepted, reason = (
                     False,
                     "model comments cannot request authority or settings changes",
@@ -69,7 +80,7 @@ def validate_decision(
                 accepted, reason = False, "new issue budget exceeded"
             elif not action.payload["title"]:
                 accepted, reason = False, "issue title is empty"
-            elif _requests_authority(
+            elif requests_authority(
                 f"{action.payload['title']}\n{action.payload['body']}"
             ):
                 accepted, reason = (
@@ -92,9 +103,13 @@ def validate_decision(
             elif any(not _safe_relative_path(item) for item in action.payload["scope"]):
                 accepted, reason = False, "subagent scope contains an unsafe path"
         elif action.type == "propose_model":
-            reason = (
-                "report-only model candidate; benchmark and maintainer review required"
-            )
+            if action.payload["repository"] not in model_candidates:
+                accepted, reason = (
+                    False,
+                    "model candidate is absent from the current scout evidence",
+                )
+            else:
+                reason = "report-only model candidate; benchmark and maintainer review required"
         elif action.type == "checkpoint":
             if decision.continuation != "continue":
                 accepted, reason = (
@@ -201,18 +216,100 @@ def _safe_relative_path(path: str) -> bool:
     )
 
 
-def _reviewable_numbers(snapshot: dict[str, Any], label: str) -> set[int]:
+def reviewable_numbers(snapshot: dict[str, Any], label: str) -> set[int]:
     numbers: set[int] = set()
     for collection in ("issues", "pull_requests"):
-        for item in snapshot.get(collection, []):
+        items = snapshot.get(collection, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            raw_labels = item.get("labels", [])
+            if not isinstance(raw_labels, list):
+                continue
             labels = {
                 entry.get("name") if isinstance(entry, dict) else entry
-                for entry in item.get("labels", [])
+                for entry in raw_labels
             }
             if label in labels and isinstance(item.get("number"), int):
                 numbers.add(item["number"])
     return numbers
 
 
-def _requests_authority(text: str) -> bool:
+def model_candidate_repositories(snapshot: dict[str, Any]) -> set[str]:
+    scout = snapshot.get("model_scout", {})
+    candidates = scout.get("candidates", []) if isinstance(scout, dict) else []
+    if not isinstance(candidates, list):
+        return set()
+    return {
+        item["id"]
+        for item in candidates
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and "/" in item["id"]
+    }
+
+
+def current_failed_workflows(snapshot: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    ref = snapshot.get("ref")
+    if not isinstance(ref, str) or not ref:
+        return ()
+    workflow_runs = snapshot.get("workflow_runs", [])
+    if not isinstance(workflow_runs, list):
+        return ()
+    failures: list[dict[str, Any]] = []
+    for item in workflow_runs:
+        if (
+            isinstance(item, dict)
+            and item.get("head_sha") == ref
+            and item.get("status") == "completed"
+            and item.get("conclusion")
+            not in {"success", "skipped", "neutral", None, ""}
+        ):
+            failures.append(item)
+    return tuple(failures)
+
+
+def decision_requests_authority(decision: Decision) -> bool:
+    values: list[Any] = [
+        decision.summary,
+        decision.risk_notes,
+        decision.continuation_reason,
+        [action.payload for action in decision.actions],
+    ]
+    return any(_value_requests_authority(value) for value in values)
+
+
+def decision_mentions_failure(decision: Decision) -> bool:
+    values: list[Any] = [
+        decision.summary,
+        decision.risk_notes,
+        decision.continuation_reason,
+        [action.payload for action in decision.actions],
+    ]
+    return any(_value_mentions_failure(value) for value in values)
+
+
+def requests_authority(text: str) -> bool:
     return _AUTHORITY_REQUEST.search(text) is not None
+
+
+def _value_requests_authority(value: Any) -> bool:
+    if isinstance(value, str):
+        return requests_authority(value)
+    if isinstance(value, dict):
+        return any(_value_requests_authority(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_value_requests_authority(item) for item in value)
+    return False
+
+
+def _value_mentions_failure(value: Any) -> bool:
+    if isinstance(value, str):
+        return _FAILURE_CLAIM.search(value) is not None
+    if isinstance(value, dict):
+        return any(_value_mentions_failure(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_value_mentions_failure(item) for item in value)
+    return False
