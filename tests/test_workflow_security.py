@@ -40,6 +40,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("--token-file", endpoint)
         self.assertGreaterEqual(endpoint.count("--connect-timeout 2 --max-time 5"), 2)
         self.assertNotIn("Upload sanitized service logs", endpoint)
+        self.assertIn('MAX_ENDPOINT_DURATION_MINUTES: "330"', endpoint)
+        self.assertIn("DURATION_MINUTES > MAX_ENDPOINT_DURATION_MINUTES", endpoint)
+        self.assertIn("timeout-minutes: 355", endpoint)
 
     def test_ci_and_model_smoke_cover_submitted_runtime_changes(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")

@@ -41,10 +41,12 @@ This requires a Cloudflare account and a named, remotely managed tunnel. Do not 
 5. In GitHub, create an environment named `inference`. Environment protection/reviewer rules are recommended.
 6. Add environment secrets `CLOUDFLARE_TUNNEL_TOKEN` and `INFERENCE_API_KEY`.
 7. Add environment variable `INFERENCE_PUBLIC_URL` with the HTTPS hostname.
-8. Dispatch `endpoint.yml` for 5-60 minutes.
+8. Dispatch `endpoint.yml` for 5-330 minutes (up to 5 hours 30 minutes).
 9. The workflow verifies local gateway authentication, waits for a registered tunnel connection, and performs an authenticated public `/v1/models` probe before announcing readiness.
 
 The model and gateway stay on loopback. `cloudflared` makes the outbound connection; no inbound runner port is opened. The gateway provides application authentication even if Cloudflare Access is not configured. For stronger protection, add a Cloudflare Access service-token policy in front of the same hostname as a second factor.
+
+The workflow reserves a 355-minute job window. A maximum-length 330-minute contributor session therefore retains 25 minutes for pinned-model startup or fallback, tunnel and authenticated public readiness checks, and deterministic process cleanup.
 
 GitHub never reveals an Actions secret after it is stored. Maintainers/contributors who need client access must receive `INFERENCE_API_KEY` out of band. Repository contributors should not be granted permission merely to read a key, because there is no such read-back mechanism.
 
