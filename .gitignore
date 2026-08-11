@@ -1,0 +1,16 @@
+.cache/
+.runtime/
+.caretaker/local/
+.coverage
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.gguf
+*.part
+*.log

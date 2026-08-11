@@ -1,0 +1,177 @@
+name: CPU repository caretaker
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      runtime_minutes:
+        description: Internal runtime boundary (1-340; normal default is 45)
+        required: true
+        default: "45"
+        type: string
+      model:
+        description: Automatic-eligible pinned model
+        required: true
+        default: lfm2_5_2_6b_q4_k_m
+        type: choice
+        options:
+          - lfm2_5_2_6b_q4_k_m
+          - lfm2_5_1_2b_q4_k_m
+      enable_scout:
+        description: Include report-only Hugging Face model discovery
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: cpu-repository-caretaker
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: src
+
+jobs:
+  analyze:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    env:
+      MODEL_ID: ${{ inputs.model || 'lfm2_5_2_6b_q4_k_m' }}
+      RUNTIME_MINUTES: ${{ inputs.runtime_minutes || '45' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Restore verified model cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/models
+          key: cpu-model-${{ runner.os }}-${{ env.MODEL_ID }}-${{ hashFiles('config/models.json') }}
+      - name: Capture bounded repository state
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scout=()
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ inputs.enable_scout }}" == "true" ]]; then
+            scout=(--scout)
+          fi
+          python -m githubinference snapshot \
+            --root . \
+            --repository "${GITHUB_REPOSITORY}" \
+            --ref "${GITHUB_SHA}" \
+            --github "${scout[@]}" \
+            --output .runtime/caretaker/snapshot.json
+      - name: Run bounded model turns
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_server="$(bash scripts/install_llama.sh .runtime/llama)"
+          server_pid=""
+          cleanup() {
+            if [[ -n "${server_pid}" ]]; then
+              if kill -0 "${server_pid}" 2>/dev/null; then
+                kill "${server_pid}"
+              fi
+              wait "${server_pid}" || true
+              server_pid=""
+            fi
+          }
+          trap cleanup EXIT
+          start_model() {
+            local selected="$1"
+            python -m githubinference serve \
+              --model-id "${selected}" \
+              --cache-directory .cache/models \
+              --llama-server "${llama_server}" \
+              >".runtime/caretaker/llama-server-${selected}.log" 2>&1 &
+            server_pid=$!
+            if python -m githubinference wait --timeout 240 --pid "${server_pid}"; then
+              return 0
+            fi
+            cleanup
+            return 1
+          }
+
+          active_model="${MODEL_ID}"
+          if ! start_model "${active_model}"; then
+            if [[ "${active_model}" != "lfm2_5_2_6b_q4_k_m" ]]; then
+              echo "Selected model failed and has no automatic fallback" >&2
+              exit 1
+            fi
+            active_model="lfm2_5_1_2b_q4_k_m"
+            echo "Primary failed; trying pinned low-memory fallback ${active_model}" >&2
+            start_model "${active_model}"
+          fi
+          printf '%s\n' "${active_model}" > .runtime/caretaker/active-model.txt
+          printf 'Active caretaker model: `%s`\n' "${active_model}" >> "${GITHUB_STEP_SUMMARY}"
+          python -m githubinference analyze \
+            --snapshot .runtime/caretaker/snapshot.json \
+            --output-directory .runtime/caretaker \
+            --model-id "${active_model}" \
+            --runtime-minutes "${RUNTIME_MINUTES}" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Upload read-only analysis
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: caretaker-analysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .runtime/caretaker
+          retention-days: 14
+          if-no-files-found: warn
+
+  apply:
+    needs: analyze
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    env:
+      CARETAKER_WRITE_ENABLED: ${{ vars.CARETAKER_WRITE_ENABLED || 'false' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Download analysis artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: caretaker-analysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .runtime/caretaker
+      - name: Apply deterministic policy gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python -m githubinference apply
+          --decision .runtime/caretaker/decision.json
+          --snapshot .runtime/caretaker/snapshot.json
+          --output-directory .runtime/apply
+          --run-id "${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Upload apply audit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: caretaker-apply-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .runtime/apply
+          retention-days: 30
+          if-no-files-found: warn

@@ -1,0 +1,7 @@
+/.github/workflows/ @adybag14-cyber
+/scripts/install_*.sh @adybag14-cyber
+/config/ @adybag14-cyber
+/src/githubinference/policy.py @adybag14-cyber
+/src/githubinference/github_api.py @adybag14-cyber
+/src/githubinference/gateway.py @adybag14-cyber
+/SECURITY.md @adybag14-cyber

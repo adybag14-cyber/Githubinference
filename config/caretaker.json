@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "schedule_runtime_minutes": 45,
+  "maximum_runtime_minutes": 340,
+  "deadline_reserve_minutes": 10,
+  "maximum_turns": 4,
+  "maximum_actions_per_run": 8,
+  "maximum_issue_comments_per_run": 3,
+  "maximum_new_issues_per_run": 1,
+  "maximum_subagents_per_run": 2,
+  "maximum_context_characters": 24000,
+  "maximum_file_characters": 4000,
+  "maximum_proposal_characters": 50000,
+  "maximum_action_text_characters": 12000,
+  "maximum_github_items": 20,
+  "review_label": "caretaker:review",
+  "state_label": "caretaker:state",
+  "write_environment_variable": "CARETAKER_WRITE_ENABLED",
+  "allowed_actions": [
+    "review_issue",
+    "open_issue",
+    "propose_change",
+    "propose_model",
+    "request_subagent",
+    "checkpoint"
+  ],
+  "report_path_prefix": ".caretaker/reports/",
+  "proposal_path_prefix": ".caretaker/proposals/",
+  "blocked_proposal_paths": [
+    ".github/workflows/",
+    ".github/actions/",
+    ".github/CODEOWNERS",
+    "SECURITY.md",
+    "config/caretaker.json",
+    "src/githubinference/policy.py",
+    "src/githubinference/github_api.py",
+    "src/githubinference/schema.py",
+    "src/githubinference/executor.py",
+    "src/githubinference/prompts.py"
+  ]
+}
