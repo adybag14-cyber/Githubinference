@@ -163,6 +163,8 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
             self.assertTrue((Path(temporary) / "analysis.json").is_file())
             self.assertTrue((Path(temporary) / "decision.json").is_file())
             self.assertEqual(len(backend.calls), 1)
+            self.assertIsNotNone(backend.response_schemas[0])
+            self.assertFalse(backend.response_schemas[0]["additionalProperties"])
 
     def test_analysis_discards_over_budget_turn_and_checkpoints(self) -> None:
         config = replace(self.config, maximum_actions_per_run=1)

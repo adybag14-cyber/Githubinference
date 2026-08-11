@@ -5,7 +5,13 @@ from dataclasses import replace
 
 from githubinference.config import CaretakerConfig
 from githubinference.policy import validate_decision, validate_unified_diff
-from githubinference.schema import Action, Decision, extract_json_object, parse_decision
+from githubinference.schema import (
+    Action,
+    Decision,
+    caretaker_decision_schema,
+    extract_json_object,
+    parse_decision,
+)
 
 
 class SchemaPolicyTests(unittest.TestCase):
@@ -33,6 +39,26 @@ class SchemaPolicyTests(unittest.TestCase):
                 },
                 self.config,
             )
+
+    def test_generation_schema_is_strict_and_covers_configured_actions(self) -> None:
+        schema = caretaker_decision_schema(self.config)
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(
+            set(schema["required"]),
+            {
+                "summary",
+                "risk_notes",
+                "actions",
+                "continuation",
+                "continuation_reason",
+            },
+        )
+        variants = schema["properties"]["actions"]["items"]["oneOf"]
+        action_types = {
+            variant["properties"]["type"]["enum"][0] for variant in variants
+        }
+        self.assertEqual(action_types, self.config.allowed_actions)
+        self.assertTrue(all(not item["additionalProperties"] for item in variants))
 
     def test_reviews_require_label_and_duplicate_targets_are_rejected(self) -> None:
         decision = parse_decision(

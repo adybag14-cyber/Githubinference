@@ -82,6 +82,56 @@ class GatewayGitHubTests(unittest.TestCase):
         self.assertIs(build.call_args.args[0], proxy.return_value)
         self.assertIs(backend._opener, build.return_value)
 
+    def test_model_backend_sends_schema_constrained_response_format(self) -> None:
+        class Response:
+            status = 200
+
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+            def read(self, maximum: int) -> bytes:
+                del maximum
+                return json.dumps(
+                    {"choices": [{"message": {"content": '{"status":"ok"}'}}]}
+                ).encode()
+
+        class Opener:
+            def __init__(self) -> None:
+                self.request: urllib.request.Request | None = None
+
+            def open(
+                self, request: urllib.request.Request, *, timeout: int
+            ) -> Response:
+                del timeout
+                self.request = request
+                return Response()
+
+        schema = {
+            "type": "object",
+            "properties": {"status": {"enum": ["ok"]}},
+            "required": ["status"],
+            "additionalProperties": False,
+        }
+        backend = LlamaCppClient()
+        opener = Opener()
+        backend._opener = opener  # type: ignore[assignment]
+        self.assertEqual(
+            backend.chat_json(
+                [{"role": "user", "content": "status"}],
+                response_schema=schema,
+            ),
+            {"status": "ok"},
+        )
+        self.assertIsNotNone(opener.request)
+        payload = json.loads(opener.request.data)
+        self.assertEqual(
+            payload["response_format"],
+            {"type": "json_object", "schema": schema},
+        )
+
     def test_gateway_requires_long_key_and_constant_bearer_match(self) -> None:
         with self.assertRaisesRegex(ValueError, "32"):
             InferenceGateway(api_key="short")

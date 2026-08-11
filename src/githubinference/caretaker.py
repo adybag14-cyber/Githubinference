@@ -11,7 +11,7 @@ from .config import CaretakerConfig
 from .deadline import Deadline
 from .policy import validate_decision
 from .prompts import CARETAKER_SYSTEM_PROMPT
-from .schema import Action, Decision, parse_decision
+from .schema import Action, Decision, caretaker_decision_schema, parse_decision
 from .snapshot import snapshot_prompt
 from .util import atomic_write_json, safe_slug, utc_now
 
@@ -165,7 +165,11 @@ def _ask_for_valid_decision(
     repair_messages = list(messages)
     last_error: BaseException | None = None
     for attempt in range(2):
-        raw = backend.chat_json(repair_messages, max_tokens=2048)
+        raw = backend.chat_json(
+            repair_messages,
+            max_tokens=2048,
+            response_schema=caretaker_decision_schema(config),
+        )
         try:
             return parse_decision(raw, config)
         except ValueError as exc:
