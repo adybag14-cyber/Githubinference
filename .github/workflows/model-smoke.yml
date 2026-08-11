@@ -4,14 +4,9 @@ on:
   pull_request:
     paths:
       - "config/models.json"
+      - "config/caretaker.json"
       - "scripts/install_llama.sh"
-      - "src/githubinference/backend.py"
-      - "src/githubinference/caretaker.py"
-      - "src/githubinference/cli.py"
-      - "src/githubinference/downloader.py"
-      - "src/githubinference/registry.py"
-      - "src/githubinference/server.py"
-      - "src/githubinference/snapshot.py"
+      - "src/githubinference/**"
       - ".github/workflows/model-smoke.yml"
   workflow_dispatch:
     inputs:

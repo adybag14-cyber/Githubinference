@@ -46,11 +46,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", ci)
         self.assertIn('git diff --check "${BASE_SHA}" "${GITHUB_SHA}"', ci)
         smoke = (WORKFLOWS / "model-smoke.yml").read_text(encoding="utf-8")
-        for path in (
-            "src/githubinference/cli.py",
-            "src/githubinference/snapshot.py",
-            "src/githubinference/caretaker.py",
-        ):
+        for path in ("config/caretaker.json", "src/githubinference/**"):
             self.assertIn(path, smoke)
 
     def test_cached_runtime_assets_are_cryptographically_revalidated(self) -> None:
