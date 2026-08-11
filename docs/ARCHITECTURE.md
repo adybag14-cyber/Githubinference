@@ -60,4 +60,4 @@ A subagent is not a child process with shared memory or credentials. It is a sep
 
 The scheduled default is 45 minutes. Manual caretaker experiments may request up to 340 minutes. The analysis loop checks a reserve before every turn, then stores a checkpoint and exits. The workflow timeout is 355 minutes to preserve cleanup and artifact time below GitHub's six-hour job maximum.
 
-The endpoint is separate: it accepts only manual dispatch, has a 65-minute job timeout, and enforces an internal 5-60 minute lifetime.
+The endpoint is separate: it accepts only manual dispatch, has a 355-minute job timeout, and enforces an internal 5-330 minute lifetime. The 25-minute reserve keeps a maximum 5-hour-30-minute contributor session below GitHub's six-hour hosted-job ceiling while preserving model fallback, readiness checks, and cleanup time.

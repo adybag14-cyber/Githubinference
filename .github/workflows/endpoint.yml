@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       duration_minutes:
-        description: Endpoint lifetime (5-60 minutes)
+        description: Endpoint lifetime (5-330 minutes; maximum 5h30m)
         required: true
         default: "30"
         type: string
@@ -26,12 +26,13 @@ permissions:
 
 env:
   PYTHONPATH: src
+  MAX_ENDPOINT_DURATION_MINUTES: "330"
 
 jobs:
   endpoint:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 355
     environment: inference
     env:
       MODEL_ID: ${{ inputs.model }}
@@ -72,8 +73,9 @@ jobs:
             echo "CLOUDFLARE_TUNNEL_TOKEN must be configured in the inference environment" >&2
             exit 1
           fi
-          if ! [[ "${DURATION_MINUTES}" =~ ^[0-9]+$ ]] || (( DURATION_MINUTES < 5 || DURATION_MINUTES > 60 )); then
-            echo "duration_minutes must be between 5 and 60" >&2
+          if ! [[ "${DURATION_MINUTES}" =~ ^[0-9]+$ ]] || \
+            (( DURATION_MINUTES < 5 || DURATION_MINUTES > MAX_ENDPOINT_DURATION_MINUTES )); then
+            echo "duration_minutes must be between 5 and ${MAX_ENDPOINT_DURATION_MINUTES} (5 hours 30 minutes)" >&2
             exit 1
           fi
           if ! [[ "${INFERENCE_PUBLIC_URL}" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then

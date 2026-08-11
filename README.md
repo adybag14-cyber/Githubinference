@@ -45,7 +45,7 @@ The model's `continuation: "continue"` choice means “checkpoint and revisit on
 | `CPU repository caretaker` | every six hours, manual | split | Read-only model analysis, then policy-gated apply |
 | `Read-only CPU subagent` | bounded dispatch | read-only | Independent analysis returned as an artifact |
 | `Manual CPU model benchmark` | manual | read-only | Compare pinned LFM/Gemma targets and optional MTP |
-| `Temporary authenticated inference endpoint` | manual only | read-only | Serve a keyed endpoint for 5-60 minutes |
+| `Temporary authenticated inference endpoint` | manual only | read-only | Serve a keyed endpoint for 5-330 minutes (up to 5h30m) |
 
 Scheduled workflows run from the default branch, so the caretaker begins only after this implementation is merged. GitHub may disable schedules after 60 days without repository activity.
 
@@ -83,6 +83,8 @@ The endpoint is intentionally manual and ephemeral because a GitHub-hosted runne
 - variable `INFERENCE_PUBLIC_URL`: the tunnel hostname, for example `https://inference.example.com`.
 
 Configure the tunnel's public hostname to forward to `http://localhost:8787`, then dispatch `endpoint.yml`. llama.cpp listens only on `127.0.0.1:8080`; the gateway listens only on `127.0.0.1:8787`; Cloudflare Tunnel is the only internet-facing transport.
+
+Manual contributor sessions may request 5-330 minutes. The job timeout is 355 minutes, preserving 25 minutes for model startup or fallback, authenticated readiness checks, and trap-based cleanup before GitHub's six-hour hosted-job limit.
 
 Use the endpoint with the key distributed out of band:
 
