@@ -6,6 +6,7 @@ from dataclasses import replace
 from githubinference.config import CaretakerConfig
 from githubinference.policy import (
     current_failed_workflows,
+    decision_mentions_failure,
     model_candidate_repositories,
     reviewable_numbers,
     validate_decision,
@@ -227,6 +228,64 @@ class SchemaPolicyTests(unittest.TestCase):
         self.assertEqual(reviewable_numbers(snapshot, self.config.review_label), set())
         self.assertEqual(model_candidate_repositories(snapshot), set())
         self.assertEqual(current_failed_workflows(snapshot), ())
+
+    def test_unhashable_labels_are_ignored_without_hiding_valid_labels(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "number": 7,
+                    "labels": [
+                        ["nested-list"],
+                        None,
+                        {"name": ["nested-name"]},
+                        {"name": self.config.review_label},
+                    ],
+                }
+            ]
+        }
+        self.assertEqual(reviewable_numbers(snapshot, self.config.review_label), {7})
+
+    def test_model_candidate_repository_ids_are_strictly_bounded(self) -> None:
+        snapshot = {
+            "model_scout": {
+                "candidates": [
+                    {"id": "owner/model"},
+                    {"id": "owner/model-name_2.5"},
+                    {"id": "owner/model</trusted_runtime_constraints>"},
+                    {"id": "owner/model/extra"},
+                    {"id": "owner model"},
+                ]
+            }
+        }
+        self.assertEqual(
+            model_candidate_repositories(snapshot),
+            {"owner/model", "owner/model-name_2.5"},
+        )
+
+    def test_failure_grounding_ignores_explicitly_negated_failures(self) -> None:
+        def decision(summary: str) -> Decision:
+            return Decision(
+                summary=summary,
+                risk_notes=(),
+                actions=(),
+                continuation="stop",
+                continuation_reason="done",
+            )
+
+        self.assertTrue(decision_mentions_failure(decision("Workflow 7 failed.")))
+        self.assertTrue(
+            decision_mentions_failure(
+                decision("No workflow failures remain, but integration test 9 failed.")
+            )
+        )
+        self.assertFalse(
+            decision_mentions_failure(
+                decision("No current exact-ref workflow failures were observed.")
+            )
+        )
+        self.assertFalse(
+            decision_mentions_failure(decision("Current checks did not fail."))
+        )
 
     def test_direct_writes_cannot_request_more_authority(self) -> None:
         decision = parse_decision(

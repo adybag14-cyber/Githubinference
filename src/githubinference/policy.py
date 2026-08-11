@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,18 @@ _AUTHORITY_REQUEST = re.compile(
     re.IGNORECASE,
 )
 _FAILURE_CLAIM = re.compile(r"(?i)\b(?:failed|failure|failures|failing)\b")
+_NEGATED_FAILURE_CLAIM = re.compile(
+    r"\b(?:no|zero)\s+"
+    r"(?:(?:current|exact-ref|workflow|workflows|ci|test|tests|check|checks|"
+    r"job|jobs|run|runs)\s+){0,3}(?:failed|failure|failures|failing)\b|"
+    r"\b(?:no|zero)\s+(?:failed|failure|failures|failing)\s+"
+    r"(?:workflow|workflows|ci|test|tests|check|checks|job|jobs|run|runs)\b|"
+    r"\b(?:did|does|do|is|are|was|were|has|have|had)\s+not\s+"
+    r"(?:fail|failed|failing)\b|"
+    r"\bnot\s+(?:a\s+)?(?:failure|failing)\b",
+    re.IGNORECASE,
+)
+_MODEL_REPOSITORY = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,13 +209,19 @@ def _parse_diff_target(line: str, *, prefix: str, side: str) -> str | None:
 def _validate_proposal_path(path: str, config: CaretakerConfig) -> None:
     if not _safe_relative_path(path):
         raise ValueError(f"unsafe proposal path: {path!r}")
+    if is_protected_path(path, config):
+        raise ValueError(f"proposal targets protected path: {path}")
+
+
+def is_protected_path(path: str, config: CaretakerConfig) -> bool:
     candidate = path.casefold()
     for blocked in config.blocked_proposal_paths:
         blocked_folded = blocked.casefold()
         if candidate == blocked_folded.rstrip("/") or (
             blocked_folded.endswith("/") and candidate.startswith(blocked_folded)
         ):
-            raise ValueError(f"proposal targets protected path: {path}")
+            return True
+    return False
 
 
 def _safe_relative_path(path: str) -> bool:
@@ -228,10 +247,11 @@ def reviewable_numbers(snapshot: dict[str, Any], label: str) -> set[int]:
             raw_labels = item.get("labels", [])
             if not isinstance(raw_labels, list):
                 continue
-            labels = {
-                entry.get("name") if isinstance(entry, dict) else entry
-                for entry in raw_labels
-            }
+            labels: set[str] = set()
+            for entry in raw_labels:
+                name = entry.get("name") if isinstance(entry, dict) else entry
+                if isinstance(name, str):
+                    labels.add(name)
             if label in labels and isinstance(item.get("number"), int):
                 numbers.add(item["number"])
     return numbers
@@ -247,7 +267,7 @@ def model_candidate_repositories(snapshot: dict[str, Any]) -> set[str]:
         for item in candidates
         if isinstance(item, dict)
         and isinstance(item.get("id"), str)
-        and "/" in item["id"]
+        and _MODEL_REPOSITORY.fullmatch(item["id"]) is not None
     }
 
 
@@ -272,44 +292,41 @@ def current_failed_workflows(snapshot: dict[str, Any]) -> tuple[dict[str, Any], 
 
 
 def decision_requests_authority(decision: Decision) -> bool:
-    values: list[Any] = [
-        decision.summary,
-        decision.risk_notes,
-        decision.continuation_reason,
-        [action.payload for action in decision.actions],
-    ]
-    return any(_value_requests_authority(value) for value in values)
+    return any(
+        _any_text(value, requests_authority) for value in _decision_values(decision)
+    )
 
 
 def decision_mentions_failure(decision: Decision) -> bool:
-    values: list[Any] = [
+    return any(
+        _any_text(value, _mentions_affirmative_failure)
+        for value in _decision_values(decision)
+    )
+
+
+def _decision_values(decision: Decision) -> tuple[Any, ...]:
+    return (
         decision.summary,
         decision.risk_notes,
         decision.continuation_reason,
         [action.payload for action in decision.actions],
-    ]
-    return any(_value_mentions_failure(value) for value in values)
+    )
 
 
 def requests_authority(text: str) -> bool:
     return _AUTHORITY_REQUEST.search(text) is not None
 
 
-def _value_requests_authority(value: Any) -> bool:
+def _any_text(value: Any, predicate: Callable[[str], bool]) -> bool:
     if isinstance(value, str):
-        return requests_authority(value)
+        return predicate(value)
     if isinstance(value, dict):
-        return any(_value_requests_authority(item) for item in value.values())
+        return any(_any_text(item, predicate) for item in value.values())
     if isinstance(value, (list, tuple)):
-        return any(_value_requests_authority(item) for item in value)
+        return any(_any_text(item, predicate) for item in value)
     return False
 
 
-def _value_mentions_failure(value: Any) -> bool:
-    if isinstance(value, str):
-        return _FAILURE_CLAIM.search(value) is not None
-    if isinstance(value, dict):
-        return any(_value_mentions_failure(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_value_mentions_failure(item) for item in value)
-    return False
+def _mentions_affirmative_failure(text: str) -> bool:
+    without_negated_claims = _NEGATED_FAILURE_CLAIM.sub("", text)
+    return _FAILURE_CLAIM.search(without_negated_claims) is not None

@@ -13,6 +13,7 @@ from .policy import (
     current_failed_workflows,
     decision_mentions_failure,
     decision_requests_authority,
+    is_protected_path,
     model_candidate_repositories,
     requests_authority,
     reviewable_numbers,
@@ -185,13 +186,14 @@ def _ask_for_valid_decision(
     repair_messages = list(messages)
     last_error: BaseException | None = None
     attempts: list[dict[str, Any]] = []
+    generation_actions = _generation_actions(snapshot, config)
     for attempt in range(2):
         raw = backend.chat_json(
             repair_messages,
             max_tokens=2048,
             response_schema=caretaker_decision_schema(
                 config,
-                allowed_actions=_generation_actions(snapshot, config),
+                allowed_actions=generation_actions,
             ),
         )
         try:
@@ -200,9 +202,7 @@ def _ask_for_valid_decision(
                 raise ValueError(
                     "decision mentions forbidden maintainer authority or settings state"
                 )
-            if not _generation_actions(snapshot, config) and decision_mentions_failure(
-                decision
-            ):
+            if not generation_actions and decision_mentions_failure(decision):
                 raise ValueError(
                     "decision contradicts trusted exact-ref workflow health; describe "
                     "current evidence only and omit historical workflow outcomes"
@@ -232,7 +232,7 @@ def _ask_for_valid_decision(
                         },
                     ]
                 )
-    if not _generation_actions(snapshot, config):
+    if not generation_actions:
         fallback = Decision(
             summary=(
                 "Trusted runtime evidence did not grant any maintenance action for "
@@ -284,11 +284,13 @@ def _trusted_decision_constraints(
             if isinstance(item.get("id"), int)
         ),
     }
+    serialized_facts = json.dumps(facts, sort_keys=True, separators=(",", ":"))
+    serialized_facts = serialized_facts.replace("<", "\\u003c").replace(">", "\\u003e")
     return (
         "The following runtime facts were computed by trusted local code after parsing "
         "the untrusted snapshot. Treat them as hard constraints.\n"
         "<trusted_runtime_constraints>\n"
-        + json.dumps(facts, sort_keys=True, separators=(",", ":"))
+        + serialized_facts
         + "\n</trusted_runtime_constraints>\n"
         "Discuss only concrete repository defects supported by exact current evidence. "
         "Never discuss control-plane topics. Older workflow outcomes are not current "
@@ -310,16 +312,15 @@ def _model_visible_snapshot(value: Any, config: CaretakerConfig) -> Any:
         ref = value.get("ref")
         visible: dict[str, Any] = {}
         for key, item in value.items():
-            if (
-                key == "workflow_runs"
-                and isinstance(ref, str)
-                and isinstance(item, list)
-            ):
-                item = [
-                    run
-                    for run in item
-                    if isinstance(run, dict) and run.get("head_sha") == ref
-                ]
+            if key == "workflow_runs" and isinstance(item, list):
+                if isinstance(ref, str) and ref:
+                    item = [
+                        run
+                        for run in item
+                        if isinstance(run, dict) and run.get("head_sha") == ref
+                    ]
+                else:
+                    item = []
             if key == "files" and isinstance(item, list):
                 item = [
                     entry
@@ -327,23 +328,12 @@ def _model_visible_snapshot(value: Any, config: CaretakerConfig) -> Any:
                     if not (
                         isinstance(entry, dict)
                         and isinstance(entry.get("path"), str)
-                        and _protected_model_path(entry["path"], config)
+                        and is_protected_path(entry["path"], config)
                     )
                 ]
             visible[key] = _model_visible_snapshot(item, config)
         return visible
     return value
-
-
-def _protected_model_path(path: str, config: CaretakerConfig) -> bool:
-    candidate = path.casefold()
-    for blocked in config.blocked_proposal_paths:
-        blocked_folded = blocked.casefold()
-        if candidate == blocked_folded.rstrip("/") or (
-            blocked_folded.endswith("/") and candidate.startswith(blocked_folded)
-        ):
-            return True
-    return False
 
 
 def _run_id(explicit: str | None) -> str:
