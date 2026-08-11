@@ -414,6 +414,47 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
             {"open_issue", "propose_change", "request_subagent", "checkpoint"},
         )
 
+    def test_reviewable_issue_cannot_authorize_a_duplicate_issue(self) -> None:
+        backend = MockBackend(
+            [
+                {
+                    "summary": "Issue 42 is ready for review.",
+                    "risk_notes": [],
+                    "actions": [],
+                    "continuation": "stop",
+                    "continuation_reason": "No further action is needed.",
+                }
+            ]
+        )
+        snapshot = {
+            "issues": [
+                {
+                    "number": 42,
+                    "labels": [{"name": self.config.review_label}],
+                }
+            ],
+            "workflow_runs": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            run_analysis(
+                backend=backend,
+                snapshot=snapshot,
+                config=self.config,
+                runtime_minutes=15,
+                output_directory=temporary,
+                run_id="reviewable-issue",
+            )
+        variants = backend.response_schemas[0]["properties"]["actions"]["items"][
+            "oneOf"
+        ]
+        generated_types = {
+            variant["properties"]["type"]["enum"][0] for variant in variants
+        }
+        self.assertEqual(
+            generated_types,
+            {"review_issue", "propose_change", "request_subagent", "checkpoint"},
+        )
+
     def test_analysis_discards_over_budget_turn_and_checkpoints(self) -> None:
         config = replace(self.config, maximum_actions_per_run=1)
         backend = MockBackend(

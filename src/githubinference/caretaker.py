@@ -260,8 +260,9 @@ def _generation_actions(
         actions.discard("review_issue")
     if not model_candidate_repositories(snapshot):
         actions.discard("propose_model")
-    if not reviewable and not current_failures:
+    if not current_failures:
         actions.discard("open_issue")
+    if not reviewable and not current_failures:
         actions.discard("propose_change")
         actions.discard("request_subagent")
         actions.discard("checkpoint")
