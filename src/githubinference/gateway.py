@@ -42,7 +42,10 @@ class InferenceGateway:
         self.upstream = upstream.rstrip("/")
         self.request_timeout_seconds = request_timeout_seconds
         self.inflight = threading.BoundedSemaphore(value=1)
-        self._opener = urllib.request.build_opener(_RejectRedirects())
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectRedirects(),
+        )
 
     def authorized(self, header: str | None) -> bool:
         prefix = "Bearer "
@@ -163,7 +166,7 @@ def serve_gateway(
             payload = self.rfile.read(length)
             try:
                 decoded = json.loads(payload)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 self._send(
                     *_json_response(
                         HTTPStatus.BAD_REQUEST, "request body is not valid JSON"

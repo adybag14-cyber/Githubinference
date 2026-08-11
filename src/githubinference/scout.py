@@ -11,6 +11,12 @@ from .util import load_json, utc_now
 
 UrlOpen = Callable[..., object]
 
+_INTEGER_RANGES = {
+    "query_limit": (1, 1_000),
+    "maximum_response_bytes": (1, 16 * 1024 * 1024),
+    "maximum_candidates": (0, 1_000),
+}
+
 
 def scout_models(
     config_path: str | Path = "config/scout.json",
@@ -21,7 +27,7 @@ def scout_models(
     config = load_json(config_path)
     if not isinstance(config, dict):
         raise ValueError("scout configuration must be an object")
-    if config.get("schema_version") != 1:
+    if type(config.get("schema_version")) is not int or config["schema_version"] != 1:
         raise ValueError("unsupported scout configuration schema")
     required = {
         "query_limit",
@@ -32,13 +38,29 @@ def scout_models(
     missing = required - set(config)
     if missing:
         raise ValueError(f"scout configuration is missing keys: {sorted(missing)}")
+    validated_integers: dict[str, int] = {}
+    for key, (minimum, maximum) in _INTEGER_RANGES.items():
+        value = config[key]
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(
+                f"{key} must be an integer between {minimum} and {maximum}"
+            )
+        validated_integers[key] = value
+    publishers = config["publishers"]
+    if not isinstance(publishers, list) or not all(
+        isinstance(publisher, str) and publisher for publisher in publishers
+    ):
+        raise ValueError("publishers must be a list of non-empty strings")
+    query_limit = validated_integers["query_limit"]
+    maximum_response_bytes = validated_integers["maximum_response_bytes"]
+    maximum_candidates = validated_integers["maximum_candidates"]
     params = urllib.parse.urlencode(
         {
             "filter": "gguf",
             "pipeline_tag": "text-generation",
             "sort": "lastModified",
             "direction": "-1",
-            "limit": int(config["query_limit"]),
+            "limit": query_limit,
             "full": "true",
         }
     )
@@ -48,14 +70,17 @@ def scout_models(
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:  # type: ignore[attr-defined]
-            maximum = int(config["maximum_response_bytes"])
-            raw = response.read(maximum + 1)
-        if len(raw) > maximum:
+            raw = response.read(maximum_response_bytes + 1)
+        if len(raw) > maximum_response_bytes:
             raise ValueError("Hugging Face response exceeded configured size")
         models = json.loads(raw)
         if not isinstance(models, list):
             raise ValueError("Hugging Face response was not a list")
-        candidates = _filter_models(models, config)
+        candidates = _filter_models(
+            models,
+            publishers=set(publishers),
+            maximum_candidates=maximum_candidates,
+        )
         return {
             "status": "ok",
             "captured_at": utc_now(),
@@ -72,8 +97,11 @@ def scout_models(
         }
 
 
-def _filter_models(models: list[Any], config: dict[str, Any]) -> list[dict[str, Any]]:
-    publishers = set(config["publishers"])
+def _filter_models(
+    models: list[Any], *, publishers: set[str], maximum_candidates: int
+) -> list[dict[str, Any]]:
+    if maximum_candidates == 0:
+        return []
     candidates: list[dict[str, Any]] = []
     for item in models:
         if not isinstance(item, dict):
@@ -101,6 +129,6 @@ def _filter_models(models: list[Any], config: dict[str, Any]) -> list[dict[str, 
                 "tags": tags,
             }
         )
-        if len(candidates) >= int(config["maximum_candidates"]):
+        if len(candidates) >= maximum_candidates:
             break
     return candidates

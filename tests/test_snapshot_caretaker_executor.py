@@ -133,7 +133,7 @@ class SnapshotCaretakerExecutorTests(unittest.TestCase):
                 repository="owner/repo",
                 ref="abc",
                 github_data={
-                    "issues": [{"number": index, "title": "x"} for index in range(25)]
+                    "issues": [{"number": index, "title": "x"} for index in range(50)]
                 },
             )
         self.assertEqual(len(snapshot["issues"]), 25)

@@ -131,6 +131,80 @@ class RegistryDownloaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing keys"):
                 scout_models(config)
 
+    def test_scout_rejects_invalid_configuration_values_before_network(self) -> None:
+        base = {
+            "schema_version": 1,
+            "query_limit": 100,
+            "maximum_response_bytes": 2_097_152,
+            "publishers": ["LiquidAI"],
+            "maximum_candidates": 16,
+        }
+        invalid_values = (
+            {"schema_version": True},
+            {"query_limit": True},
+            {"query_limit": 0},
+            {"maximum_response_bytes": None},
+            {"maximum_response_bytes": 16 * 1024 * 1024 + 1},
+            {"maximum_candidates": -1},
+            {"publishers": "LiquidAI"},
+            {"publishers": ["LiquidAI", 7]},
+        )
+        for invalid in invalid_values:
+            with (
+                self.subTest(invalid=invalid),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                config = Path(temporary) / "scout.json"
+                config.write_text(
+                    json.dumps(base | invalid),
+                    encoding="utf-8",
+                )
+
+                def unexpected_urlopen(*args: object, **kwargs: object) -> object:
+                    del args, kwargs
+                    self.fail("invalid scout configuration reached the network")
+
+                with self.assertRaises(ValueError):
+                    scout_models(config, urlopen=unexpected_urlopen)
+
+    def test_scout_zero_candidate_budget_returns_no_candidates(self) -> None:
+        class Response:
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+            def read(self, maximum: int) -> bytes:
+                del maximum
+                return json.dumps(
+                    [
+                        {
+                            "id": "LiquidAI/model",
+                            "private": False,
+                            "gated": False,
+                        }
+                    ]
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "scout.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "query_limit": 1,
+                        "maximum_response_bytes": 1024,
+                        "publishers": ["LiquidAI"],
+                        "maximum_candidates": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = scout_models(config, urlopen=lambda *args, **kwargs: Response())
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["candidates"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

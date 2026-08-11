@@ -3,8 +3,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import socket
 import threading
 import unittest
+import urllib.error
+import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -12,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from githubinference.cli import main as cli_main
-from githubinference.gateway import InferenceGateway
+from githubinference.gateway import InferenceGateway, serve_gateway
 from githubinference.github_api import (
     GitHubClient,
     _read_subagent_archive,
@@ -63,6 +66,66 @@ class GatewayGitHubTests(unittest.TestCase):
         self.assertFalse(gateway.authorized("Bearer " + "b" * 32))
         self.assertTrue(gateway.authorized("Bearer " + "a" * 32))
         self.assertFalse(gateway.authorized("Bearer " + "é" * 32))
+
+    def test_gateway_loopback_opener_ignores_environment_proxies(self) -> None:
+        with (
+            patch("githubinference.gateway.urllib.request.ProxyHandler") as proxy,
+            patch("githubinference.gateway.urllib.request.build_opener") as build,
+        ):
+            gateway = InferenceGateway(api_key="a" * 32)
+        proxy.assert_called_once_with({})
+        self.assertEqual(len(build.call_args.args), 2)
+        self.assertIs(build.call_args.args[0], proxy.return_value)
+        self.assertIs(gateway._opener, build.return_value)
+
+    def test_gateway_returns_bad_request_for_invalid_utf8_json(self) -> None:
+        servers: list[ThreadingHTTPServer] = []
+        ready = threading.Event()
+
+        def server_factory(
+            address: tuple[str, int], handler: type[BaseHTTPRequestHandler]
+        ) -> ThreadingHTTPServer:
+            server = ThreadingHTTPServer(address, handler)
+            servers.append(server)
+            ready.set()
+            return server
+
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        with patch(
+            "githubinference.gateway.ThreadingHTTPServer",
+            side_effect=server_factory,
+        ):
+            thread = threading.Thread(
+                target=serve_gateway,
+                kwargs={"api_key": "a" * 32, "port": port},
+                daemon=True,
+            )
+            thread.start()
+            self.assertTrue(ready.wait(timeout=2))
+            server = servers[0]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
+                data=b'{"prompt":"\xff"}',
+                method="POST",
+                headers={
+                    "Authorization": "Bearer " + "a" * 32,
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as captured:
+                    urllib.request.urlopen(request, timeout=2)  # noqa: S310
+                try:
+                    self.assertEqual(captured.exception.code, 400)
+                    self.assertIn(b"not valid JSON", captured.exception.read())
+                finally:
+                    captured.exception.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
     def test_gateway_does_not_forward_bearer_key(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)

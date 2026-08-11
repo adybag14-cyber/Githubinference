@@ -60,7 +60,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         llama = (ROOT / "scripts" / "install_llama.sh").read_text(encoding="utf-8")
         self.assertIn('"${BINARY}" | sha256sum --check --status', cloudflared)
         self.assertIn('"${CACHED_ARCHIVE}" | sha256sum --check --status', llama)
-        self.assertIn("verified-${LLAMA_SHA256:0:12}", llama)
+        self.assertIn('VERIFIED_DIR="${INSTALL_DIR}/verified-${LLAMA_SHA256}"', llama)
+        self.assertIn("-name 'verified-*'", llama)
 
 
 if __name__ == "__main__":
