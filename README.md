@@ -1,14 +1,14 @@
 # Githubinference
 
-Githubinference is an experiment in running a useful, repository-aware LLM entirely on a GitHub-hosted CPU runner. The first caretaker is LiquidAI's LFM2.5 2.6B GGUF. It can inspect a bounded snapshot of this repository, issues, pull requests, previous subagent artifacts, and recent workflow state; then it returns structured proposals to a deterministic policy layer.
+Githubinference is an experiment in running a useful, repository-aware LLM entirely on a GitHub-hosted CPU runner. The default caretaker is LiquidAI's LFM3 1.7B GGUF. It can inspect a bounded snapshot of this repository, issues, pull requests, previous subagent artifacts, and recent workflow state; then it returns structured proposals to a deterministic policy layer.
 
 The experiment is deliberately not an unrestricted autonomous bot. Model text is untrusted. The model never receives a write-capable token, never executes shell commands, never merges, and never applies its own patches. A separate short-lived job can perform a small allowlist of auditable GitHub operations only when the repository variable `CARETAKER_WRITE_ENABLED` is exactly true.
 
 ## What is implemented
 
 - A six-hour cron cadence (`17 */6 * * *`) with a normal 45-minute internal budget.
-- Pinned, SHA256-verified llama.cpp and GGUF downloads.
-- LFM2.5 2.6B Q4_K_M as the primary model and LFM2.5 1.2B as a low-memory fallback.
+- Pinned, SHA256-verified llama.cpp source and GGUF downloads, with a fresh CPU server build.
+- LFM3 1.7B Q4_K_M as the primary model and LFM2.5 1.2B as a low-memory fallback.
 - A bounded, JSON-only caretaker loop with at most four turns and eight proposed actions.
 - Read-only repository, issue, PR, workflow, model-scout, and subagent context.
 - Deterministic policy checks before every possible GitHub write.
@@ -92,7 +92,7 @@ Use the endpoint with the key distributed out of band:
 curl https://inference.example.com/v1/chat/completions \
   -H "Authorization: Bearer $INFERENCE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"lfm2_5_2_6b_q4_k_m","messages":[{"role":"user","content":"Hello"}],"max_tokens":128,"stream":false}'
+  -d '{"model":"lfm3_1_7b_q4_k_m","messages":[{"role":"user","content":"Hello"}],"max_tokens":128,"stream":false}'
 ```
 
 GitHub secrets are write-only: collaborators cannot retrieve `INFERENCE_API_KEY` from the repository. A maintainer must share the client copy through a secure channel. Rotate it if it is exposed. The gateway limits requests to 1 MiB, responses to 8 MiB, output to 4,096 tokens, disables streaming, allows one inference at a time, and never forwards or logs the bearer key. Endpoint logs and the temporary tunnel-token file are not uploaded as artifacts.
@@ -103,10 +103,11 @@ See [operations](docs/OPERATIONS.md) for the exact setup and rollback procedure.
 
 All runnable artifacts are immutable entries in [config/models.json](config/models.json). A registry entry includes the upstream repository, full revision, filename, exact byte size, SHA256, license, and automatic/manual eligibility.
 
-1. `lfm2_5_2_6b_q4_k_m` — primary automatic caretaker.
-2. `lfm2_5_1_2b_q4_k_m` — lower-memory automatic fallback.
-3. `gemma4_e2b_it_qat_q4_0` — manual benchmark target because the 3.35 GB QAT GGUF has a larger memory/time footprint.
-4. `gemma4_e2b_it_qat_mtp_q8_0` — optional 98 MB MTP assistant, manual because it is a pinned community conversion.
+1. `lfm3_1_7b_q4_k_m` — primary automatic caretaker.
+2. `lfm2_5_2_6b_q4_k_m` — previous primary, retained for explicit rollback and comparisons.
+3. `lfm2_5_1_2b_q4_k_m` — lower-memory automatic fallback.
+4. `gemma4_e2b_it_qat_q4_0` — manual benchmark target because the 3.35 GB QAT GGUF has a larger memory/time footprint.
+5. `gemma4_e2b_it_qat_mtp_q8_0` — optional 98 MB MTP assistant, manual because it is a pinned community conversion.
 
 The scheduled caretaker and temporary endpoint retry the official 1.2B model only if the primary's exact process exits before health. Model-smoke and benchmarks never substitute a fallback because that would invalidate their evidence. The model scout can suggest newer candidates only from an allowlist of established publishers. Suggestions remain inert metadata until a maintainer pins the exact artifact and the real benchmark workflow passes. More detail is in [models](docs/MODELS.md).
 
@@ -120,10 +121,10 @@ python -m githubinference validate
 python -m unittest discover -s tests -v
 ```
 
-On Linux, run a real local smoke test with the pinned runner binary and model:
+On Linux, run a real local smoke test with the pinned source build and model:
 
 ```bash
-bash scripts/local_smoke.sh lfm2_5_2_6b_q4_k_m 18080
+bash scripts/local_smoke.sh lfm3_1_7b_q4_k_m 18080
 ```
 
 The script owns one exact server PID, fails if that process exits early, and always cleans it up.

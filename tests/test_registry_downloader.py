@@ -46,7 +46,7 @@ def _small_spec(content: bytes) -> ModelSpec:
 class RegistryDownloaderTests(unittest.TestCase):
     def test_checked_in_registry_is_fully_pinned(self) -> None:
         registry = ModelRegistry.load()
-        self.assertEqual(registry.default_model, "lfm2_5_2_6b_q4_k_m")
+        self.assertEqual(registry.default_model, "lfm3_1_7b_q4_k_m")
         for spec in registry.models.values():
             self.assertEqual(len(spec.revision), 40)
             self.assertEqual(len(spec.sha256), 64)
