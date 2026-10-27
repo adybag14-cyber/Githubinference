@@ -18,6 +18,7 @@
       "top_p": 0.95,
       "top_k": 50,
       "repeat_penalty": 1.1,
+      "reasoning_budget": null,
       "notes": "Primary CPU caretaker model. Official LiquidAI GGUF; requires the pinned LFM3-compatible llama.cpp source build."
     },
     "lfm2_5_2_6b_q4_k_m": {
