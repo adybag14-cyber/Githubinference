@@ -6,9 +6,10 @@ on:
       model:
         description: Pinned target model
         required: true
-        default: lfm2_5_2_6b_q4_k_m
+        default: lfm3_1_7b_q4_k_m
         type: choice
         options:
+          - lfm3_1_7b_q4_k_m
           - lfm2_5_2_6b_q4_k_m
           - lfm2_5_1_2b_q4_k_m
           - gemma4_e2b_it_qat_q4_0

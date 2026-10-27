@@ -44,8 +44,6 @@ def llama_server_command(
         "--jinja",
         "--reasoning",
         "off",
-        "--reasoning-budget",
-        "0",
         "--metrics",
         "--no-webui",
         "--temp",
@@ -57,6 +55,10 @@ def llama_server_command(
         "--repeat-penalty",
         str(spec.repeat_penalty),
     ]
+    # LFM3 already closes its thinking prefix when thinking is disabled. A forced
+    # zero-token budget injects another closing tag and corrupts JSON grammars.
+    if spec.reasoning_budget is not None:
+        command.extend(["--reasoning-budget", str(spec.reasoning_budget)])
     if draft_spec is not None or draft_path is not None:
         if draft_spec is None or draft_path is None:
             raise ValueError("both draft spec and draft path are required")

@@ -13,9 +13,10 @@ on:
       model:
         description: Pinned automatic model to smoke test
         required: true
-        default: lfm2_5_2_6b_q4_k_m
+        default: lfm3_1_7b_q4_k_m
         type: choice
         options:
+          - lfm3_1_7b_q4_k_m
           - lfm2_5_2_6b_q4_k_m
           - lfm2_5_1_2b_q4_k_m
 
@@ -26,7 +27,7 @@ env:
   PYTHONPATH: src
 
 concurrency:
-  group: model-smoke-${{ github.ref }}
+  group: model-smoke-${{ github.ref }}-${{ inputs.model || 'lfm3_1_7b_q4_k_m' }}
   cancel-in-progress: true
 
 jobs:
@@ -35,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      MODEL_ID: ${{ inputs.model || 'lfm2_5_2_6b_q4_k_m' }}
+      MODEL_ID: ${{ inputs.model || 'lfm3_1_7b_q4_k_m' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,7 +55,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p .runtime/model-smoke
+          build_started=${SECONDS}
           llama_server="$(bash scripts/install_llama.sh .runtime/llama)"
+          printf 'source_build_seconds=%s\n' "$((SECONDS - build_started))" \
+            > .runtime/model-smoke/resources.txt
+          load_started=${SECONDS}
           python -m githubinference serve \
             --model-id "${MODEL_ID}" \
             --cache-directory .cache/models \
@@ -62,14 +68,20 @@ jobs:
           server_pid=$!
           cleanup() {
             if kill -0 "${server_pid}" 2>/dev/null; then
+              awk '/VmRSS:|VmHWM:/' "/proc/${server_pid}/status" \
+                >> .runtime/model-smoke/resources.txt || true
               kill "${server_pid}"
             fi
             wait "${server_pid}" || true
           }
           trap cleanup EXIT
           python -m githubinference wait --timeout 240 --pid "${server_pid}"
+          printf 'model_download_and_load_seconds=%s\n' "$((SECONDS - load_started))" \
+            >> .runtime/model-smoke/resources.txt
           python -m githubinference smoke --model-id "${MODEL_ID}"
-          mkdir -p .runtime/model-smoke
+          python -m githubinference benchmark \
+            --model-id "${MODEL_ID}" \
+            --output .runtime/model-smoke/benchmark.json
           python -m githubinference snapshot \
             --root . \
             --repository "${GITHUB_REPOSITORY}" \
@@ -79,11 +91,15 @@ jobs:
             --snapshot .runtime/model-smoke/snapshot.json \
             --model-id "${MODEL_ID}" \
             --output .runtime/model-smoke/caretaker-contract.json
-      - name: Upload engine log on failure
-        if: failure()
+          du -sk .runtime .cache/models >> .runtime/model-smoke/resources.txt
+      - name: Upload model validation evidence
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: llama-smoke-log-${{ github.run_id }}-${{ github.run_attempt }}
-          path: llama-server.log
-          retention-days: 7
+          name: cpu-model-smoke-${{ env.MODEL_ID }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .runtime/model-smoke
+            llama-server.log
+          include-hidden-files: true
+          retention-days: 30
           if-no-files-found: warn

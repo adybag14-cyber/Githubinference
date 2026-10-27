@@ -1,7 +1,26 @@
 {
   "schema_version": 1,
-  "default_model": "lfm2_5_2_6b_q4_k_m",
+  "default_model": "lfm3_1_7b_q4_k_m",
   "models": {
+    "lfm3_1_7b_q4_k_m": {
+      "display_name": "LiquidAI LFM3 1.7B Q4_K_M",
+      "kind": "chat",
+      "repository": "LiquidAI/LFM3-1.7B-GGUF",
+      "revision": "b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdf",
+      "filename": "LFM3-1.7B-Q4_K_M.gguf",
+      "sha256": "3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4",
+      "size_bytes": 1099627808,
+      "license": "LFM-1.0",
+      "publisher_trust": "upstream",
+      "automatic_eligible": true,
+      "context_size": 16384,
+      "temperature": 0.1,
+      "top_p": 0.95,
+      "top_k": 50,
+      "repeat_penalty": 1.1,
+      "reasoning_budget": null,
+      "notes": "Primary CPU caretaker model. Official LiquidAI GGUF; requires the pinned LFM3-compatible llama.cpp source build."
+    },
     "lfm2_5_2_6b_q4_k_m": {
       "display_name": "LiquidAI LFM2.5 2.6B Q4_K_M",
       "kind": "chat",
@@ -18,7 +37,7 @@
       "top_p": 0.95,
       "top_k": 50,
       "repeat_penalty": 1.05,
-      "notes": "Primary CPU caretaker model. Official LiquidAI GGUF and immutable revision."
+      "notes": "Previous primary, retained as an explicit rollback and comparison model."
     },
     "lfm2_5_1_2b_q4_k_m": {
       "display_name": "LiquidAI LFM2.5 1.2B Instruct Q4_K_M",

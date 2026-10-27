@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/models
-          key: cpu-model-${{ runner.os }}-lfm2_5_2_6b_q4_k_m-${{ hashFiles('config/models.json') }}
+          key: cpu-model-${{ runner.os }}-lfm3_1_7b_q4_k_m-${{ hashFiles('config/models.json') }}
       - name: Capture bounded repository state
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -93,7 +93,7 @@ jobs:
             cleanup
             return 1
           }
-          active_model="lfm2_5_2_6b_q4_k_m"
+          active_model="lfm3_1_7b_q4_k_m"
           if ! start_model "${active_model}"; then
             active_model="lfm2_5_1_2b_q4_k_m"
             echo "Primary failed; trying pinned low-memory fallback ${active_model}" >&2

@@ -46,7 +46,7 @@ def _small_spec(content: bytes) -> ModelSpec:
 class RegistryDownloaderTests(unittest.TestCase):
     def test_checked_in_registry_is_fully_pinned(self) -> None:
         registry = ModelRegistry.load()
-        self.assertEqual(registry.default_model, "lfm2_5_2_6b_q4_k_m")
+        self.assertEqual(registry.default_model, "lfm3_1_7b_q4_k_m")
         for spec in registry.models.values():
             self.assertEqual(len(spec.revision), 40)
             self.assertEqual(len(spec.sha256), 64)
@@ -119,10 +119,29 @@ class RegistryDownloaderTests(unittest.TestCase):
             replace(spec, top_k=False),
             replace(spec, repeat_penalty=0),
             replace(spec, repeat_penalty=11),
+            replace(spec, reasoning_budget=True),
+            replace(spec, reasoning_budget=-1),
+            replace(spec, reasoning_budget=1025),
+            replace(spec, reasoning_budget="0"),  # type: ignore[arg-type]
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "invalid"):
                     _validate_spec(invalid)
+
+    def test_lfm3_disables_thinking_without_forcing_tokens_into_json_grammar(
+        self,
+    ) -> None:
+        registry = ModelRegistry.load()
+        target = registry.get("lfm3_1_7b_q4_k_m")
+        command = llama_server_command("llama-server", target, "model.gguf")
+        self.assertEqual(command[command.index("--reasoning") + 1], "off")
+        self.assertNotIn("--reasoning-budget", command)
+        for model_id in ("lfm2_5_2_6b_q4_k_m", "lfm2_5_1_2b_q4_k_m"):
+            with self.subTest(model=model_id):
+                command = llama_server_command(
+                    "llama-server", registry.get(model_id), "model.gguf"
+                )
+                self.assertEqual(command[command.index("--reasoning-budget") + 1], "0")
 
     def test_scout_rejects_missing_required_configuration_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -305,6 +305,12 @@ def _caretaker_smoke(args: argparse.Namespace) -> int:
     if args.output:
         atomic_write_json(args.output, result)
     print(json.dumps(result, sort_keys=True))
+    if not result["turns"] or any(
+        turn["generation_fallback_used"] for turn in result["turns"]
+    ):
+        raise RuntimeError(
+            "caretaker contract smoke did not produce a validated model decision"
+        )
     return 0
 
 

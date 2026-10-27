@@ -29,6 +29,7 @@ class ModelSpec:
     top_p: float = 0.95
     top_k: int = 50
     repeat_penalty: float = 1.0
+    reasoning_budget: int | None = 0
     draft_model: str | None = None
     notes: str = ""
 
@@ -119,6 +120,12 @@ def _validate_spec(spec: ModelSpec) -> None:
         raise ValueError(f"top_k for {spec.model_id} is invalid")
     if not _is_number(spec.repeat_penalty) or not 0 < spec.repeat_penalty <= 10:
         raise ValueError(f"repeat_penalty for {spec.model_id} is invalid")
+    if spec.reasoning_budget is not None and (
+        isinstance(spec.reasoning_budget, bool)
+        or not isinstance(spec.reasoning_budget, int)
+        or not 0 <= spec.reasoning_budget <= spec.context_size
+    ):
+        raise ValueError(f"reasoning_budget for {spec.model_id} is invalid")
 
 
 def _is_number(value: object) -> bool:

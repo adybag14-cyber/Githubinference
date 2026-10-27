@@ -13,9 +13,10 @@ on:
       model:
         description: Automatic-eligible pinned model
         required: true
-        default: lfm2_5_2_6b_q4_k_m
+        default: lfm3_1_7b_q4_k_m
         type: choice
         options:
+          - lfm3_1_7b_q4_k_m
           - lfm2_5_2_6b_q4_k_m
           - lfm2_5_1_2b_q4_k_m
       enable_scout:
@@ -42,7 +43,7 @@ jobs:
       issues: read
       pull-requests: read
     env:
-      MODEL_ID: ${{ inputs.model || 'lfm2_5_2_6b_q4_k_m' }}
+      MODEL_ID: ${{ inputs.model || 'lfm3_1_7b_q4_k_m' }}
       RUNTIME_MINUTES: ${{ inputs.runtime_minutes || '45' }}
     steps:
       - name: Check out repository
@@ -107,7 +108,8 @@ jobs:
 
           active_model="${MODEL_ID}"
           if ! start_model "${active_model}"; then
-            if [[ "${active_model}" != "lfm2_5_2_6b_q4_k_m" ]]; then
+            if [[ "${active_model}" != "lfm3_1_7b_q4_k_m" && \
+                  "${active_model}" != "lfm2_5_2_6b_q4_k_m" ]]; then
               echo "Selected model failed and has no automatic fallback" >&2
               exit 1
             fi

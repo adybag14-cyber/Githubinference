@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from githubinference.backend import LlamaCppClient
+from githubinference.backend import LlamaCppClient, MockBackend
 from githubinference.cli import _analysis_request_timeout
 from githubinference.cli import main as cli_main
 from githubinference.config import CaretakerConfig
@@ -64,6 +64,53 @@ class _EndpointHandler(BaseHTTPRequestHandler):
 
 
 class GatewayGitHubTests(unittest.TestCase):
+    def test_caretaker_smoke_rejects_fallback_and_preserves_diagnostics(self) -> None:
+        for summary, expected_status in (
+            ("No current maintenance action is supported by the snapshot.", 0),
+            ("The write gate is disabled.", 2),
+        ):
+            with self.subTest(summary=summary), tempfile.TemporaryDirectory() as tmp:
+                snapshot = Path(tmp) / "input.json"
+                snapshot.write_text('{"files": []}', encoding="utf-8")
+                output = Path(tmp) / "result.json"
+                backend = MockBackend(
+                    [
+                        {
+                            "summary": summary,
+                            "risk_notes": [],
+                            "actions": [],
+                            "continuation": "stop",
+                            "continuation_reason": "No further action is needed.",
+                        }
+                    ]
+                )
+                with (
+                    patch("githubinference.cli.LlamaCppClient", return_value=backend),
+                    patch("sys.stdout", new=io.StringIO()),
+                    patch("sys.stderr", new=io.StringIO()),
+                ):
+                    status = cli_main(
+                        [
+                            "caretaker-smoke",
+                            "--snapshot",
+                            str(snapshot),
+                            "--output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(status, expected_status)
+                result = json.loads(output.read_text(encoding="utf-8"))
+                turn = result["turns"][0]
+                self.assertEqual(turn["generation_fallback_used"], expected_status != 0)
+                if expected_status:
+                    self.assertEqual(len(backend.calls), 2)
+                    self.assertTrue(
+                        all(
+                            not attempt["accepted"]
+                            for attempt in turn["generation_attempts"]
+                        )
+                    )
+
     def test_analysis_request_timeout_tracks_the_bounded_work_window(self) -> None:
         config = CaretakerConfig.load()
         self.assertEqual(_analysis_request_timeout(config, 1), 45)

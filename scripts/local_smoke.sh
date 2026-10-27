@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly MODEL_ID="${1:-lfm2_5_2_6b_q4_k_m}"
+readonly MODEL_ID="${1:-lfm3_1_7b_q4_k_m}"
 readonly PORT="${2:-18080}"
 readonly CACHE_DIRECTORY="${MODEL_CACHE_DIRECTORY:-.cache/models}"
 readonly LOG_DIRECTORY="${LOCAL_SMOKE_LOG_DIRECTORY:-.runtime/local-smoke}"
